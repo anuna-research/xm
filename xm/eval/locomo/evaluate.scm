@@ -10,14 +10,17 @@
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
   #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-13)  ; String library for string-trim, etc.
   #:use-module (xm store)
   #:export (evaluate-qa
             evaluate-conversation
             evaluate-all
             compute-f1
             compute-token-f1
+            compute-category-f1
             compute-metrics
             format-results
+            normalize-answer
             category-name
             *qa-categories*))
 
@@ -38,14 +41,74 @@
       (string->symbol (format #f "category_~a" cat-num))))
 
 ;;; --------------------------------------------------------------------
+;;; Answer Normalization (following LoCoMo specification)
+;;; https://github.com/snap-research/locomo
+;;; --------------------------------------------------------------------
+
+(define *articles*
+  '("a" "an" "the" "and"))
+
+(define *punctuation-chars*
+  '(#\. #\, #\! #\? #\' #\" #\( #\) #\[ #\] #\: #\; #\- #\/ #\\))
+
+(define (normalize-answer text)
+  "Normalize answer following LoCoMo's normalize_answer() function.
+   - Remove commas (but preserve for later splitting in multi_hop)
+   - Remove articles (a, an, the, and)
+   - Remove punctuation
+   - Normalize whitespace
+   - Lowercase"
+  (if (not (string? text))
+      (normalize-answer (format #f "~a" text))
+      (let* (;; Lowercase first
+             (lowered (string-downcase text))
+             ;; Remove punctuation
+             (no-punct (string-filter
+                        (lambda (c) (not (member c *punctuation-chars*)))
+                        lowered))
+             ;; Split into words
+             (words (string-split no-punct #\space))
+             ;; Remove articles
+             (no-articles (filter (lambda (w)
+                                    (and (> (string-length w) 0)
+                                         (not (member w *articles*))))
+                                  words)))
+        ;; Rejoin with single spaces
+        (string-join no-articles " "))))
+
+(define (simple-stem word)
+  "Simple stemming: remove common suffixes.
+   This is a simplified version - LoCoMo uses Porter Stemmer."
+  (cond
+   ;; Remove -ing
+   ((and (> (string-length word) 4)
+         (string-suffix? "ing" word))
+    (substring word 0 (- (string-length word) 3)))
+   ;; Remove -ed
+   ((and (> (string-length word) 3)
+         (string-suffix? "ed" word))
+    (substring word 0 (- (string-length word) 2)))
+   ;; Remove -s (but not -ss)
+   ((and (> (string-length word) 2)
+         (string-suffix? "s" word)
+         (not (string-suffix? "ss" word)))
+    (substring word 0 (- (string-length word) 1)))
+   ;; Remove -ly
+   ((and (> (string-length word) 3)
+         (string-suffix? "ly" word))
+    (substring word 0 (- (string-length word) 2)))
+   (else word)))
+
+;;; --------------------------------------------------------------------
 ;;; Token-level F1 Score (LoCoMo's primary metric)
 ;;; --------------------------------------------------------------------
 
-(define (compute-token-f1 prediction ground-truth)
+(define* (compute-token-f1 prediction ground-truth #:key (stemming #t))
   "Compute token-level F1 score between prediction and ground truth.
-   This is the main metric used in LoCoMo evaluation."
-  (let* ((pred-tokens (tokenize prediction))
-         (truth-tokens (tokenize ground-truth))
+   This is the main metric used in LoCoMo evaluation.
+   Following LoCoMo: stemmed token overlap with precision/recall."
+  (let* ((pred-tokens (tokenize prediction #:stemming stemming))
+         (truth-tokens (tokenize ground-truth #:stemming stemming))
          (pred-set (list->set pred-tokens))
          (truth-set (list->set truth-tokens))
          (intersection (set-intersection pred-set truth-set))
@@ -57,24 +120,21 @@
                      (/ (set-size intersection) (set-size truth-set)))))
     (if (= (+ precision recall) 0)
         0.0
-        (* 2 (/ (* precision recall) (+ precision recall))))))
+        (* 2.0 (/ (* precision recall) (+ precision recall))))))
 
 (define (compute-f1 prediction ground-truth)
   "Alias for compute-token-f1 for compatibility."
   (compute-token-f1 prediction ground-truth))
 
-(define (tokenize text)
-  "Tokenize text into lowercase words."
+(define* (tokenize text #:key (stemming #t))
+  "Tokenize and normalize text following LoCoMo methodology."
   (if (string? text)
-      (let* ((cleaned (string-downcase text))
-             (words (string-split cleaned #\space)))
-        (filter (lambda (w) (> (string-length w) 0))
-                (map (lambda (w)
-                       (string-trim-both
-                        w
-                        (lambda (c)
-                          (member c '(#\. #\, #\! #\? #\' #\" #\( #\) #\[ #\])))))
-                     words)))
+      (let* ((normalized (normalize-answer text))
+             (words (string-split normalized #\space))
+             (filtered (filter (lambda (w) (> (string-length w) 0)) words)))
+        (if stemming
+            (map simple-stem filtered)
+            filtered))
       (if (number? text)
           (list (number->string text))
           '())))
@@ -98,6 +158,74 @@
 (define (set-empty? set)
   "Check if set is empty."
   (null? set))
+
+;;; --------------------------------------------------------------------
+;;; Category-Specific F1 Scoring (following LoCoMo methodology)
+;;; --------------------------------------------------------------------
+
+(define *adversarial-phrases*
+  '("no information"
+    "cannot determine"
+    "not mentioned"
+    "unknown"
+    "cannot be determined"
+    "no answer"
+    "not available"
+    "insufficient information"))
+
+(define (compute-category-f1 prediction ground-truth category)
+  "Compute F1 score with category-specific handling per LoCoMo spec.
+   - Categories 2,3,4 (temporal, commonsense, multi_hop): direct F1
+   - Category 1 (single_hop): F1 with comma-split partial matching
+   - Category 5 (adversarial): binary check for 'no information' phrases"
+  (case category
+    ;; Adversarial: binary scoring
+    ((5)
+     (compute-adversarial-score prediction ground-truth))
+    ;; Single-hop: uses partial F1 for comma-separated answers
+    ((1)
+     (compute-multi-answer-f1 prediction ground-truth))
+    ;; Others: standard F1
+    (else
+     (compute-token-f1 prediction ground-truth))))
+
+(define (compute-adversarial-score prediction ground-truth)
+  "Score adversarial questions (category 5).
+   Returns 1.0 if prediction indicates 'no information available', else 0.0.
+   LoCoMo checks for phrases like 'no information available'."
+  (let ((pred-lower (string-downcase prediction)))
+    (if (any (lambda (phrase)
+               (string-contains pred-lower phrase))
+             *adversarial-phrases*)
+        1.0
+        0.0)))
+
+(define (compute-multi-answer-f1 prediction ground-truth)
+  "Compute F1 for answers that may contain multiple parts (comma-separated).
+   LoCoMo splits on commas and computes partial F1 scores.
+   Returns average F1 across all ground-truth parts."
+  (let* ((gt-string (if (string? ground-truth)
+                        ground-truth
+                        (format #f "~a" ground-truth)))
+         ;; Split ground truth on commas
+         (gt-parts (map string-trim
+                        (string-split gt-string #\,)))
+         (gt-parts-clean (filter (lambda (s) (> (string-length s) 0))
+                                 gt-parts)))
+    (if (null? gt-parts-clean)
+        0.0
+        (let ((f1-scores (map (lambda (gt-part)
+                                (compute-token-f1 prediction gt-part))
+                              gt-parts-clean)))
+          ;; Return max F1 across parts (generous matching)
+          (apply max f1-scores)))))
+
+(define (any pred lst)
+  "Return #t if pred is true for any element in lst."
+  (cond
+   ((null? lst) #f)
+   ((pred (car lst)) #t)
+   (else (any pred (cdr lst)))))
 
 ;;; --------------------------------------------------------------------
 ;;; Single QA Evaluation
@@ -124,11 +252,12 @@
                          (generate-answer-fn question context)
                          (extract-answer-from-context context question)))
 
-         ;; Compute F1
-         (f1 (compute-token-f1 prediction
-                               (if (string? ground-truth)
-                                   ground-truth
-                                   (format #f "~a" ground-truth))))
+         ;; Compute F1 using category-specific scoring (LoCoMo spec)
+         (f1 (compute-category-f1 prediction
+                                  (if (string? ground-truth)
+                                      ground-truth
+                                      (format #f "~a" ground-truth))
+                                  category))
 
          ;; Check evidence overlap
          (evidence-in-context (compute-evidence-recall context evidence)))

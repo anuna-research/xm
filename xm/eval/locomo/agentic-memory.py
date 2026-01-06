@@ -8,6 +8,14 @@ This evaluation tests whether an LLM agent can effectively:
 
 The agent decides what's important to remember and how to organize it.
 
+Aligned with official LoCoMo specification:
+https://github.com/snap-research/locomo
+
+Metrics:
+- F1 Score: Token-level overlap (primary LoCoMo metric)
+- LLM Judge: Binary correctness assessment (secondary)
+- Category-specific scoring per LoCoMo methodology
+
 Usage:
     export ANTHROPIC_API_KEY=your_key
     python3 eval/locomo/agentic-memory.py --limit 10
@@ -20,6 +28,7 @@ import os
 import sys
 import re
 import time
+import string
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import requests
@@ -27,7 +36,7 @@ import requests
 XM_DIR = Path(__file__).parent.parent.parent
 os.chdir(XM_DIR)
 
-MODEL = "gpt-4o-mini"
+MODEL = "gpt-4o-mini-2024-07-18"
 API_PROVIDER = "openai"  # "anthropic" or "openai"
 GRAPH_URI = "https://xm.dev/ns/v1#graph/locomo/agentic"
 
@@ -38,6 +47,143 @@ CATEGORY_NAMES = {
     4: "multi_hop",
     5: "adversarial"
 }
+
+# ============================================================================
+# Answer Normalization & F1 Scoring (LoCoMo specification)
+# https://github.com/snap-research/locomo/blob/main/task_eval/evaluation.py
+# ============================================================================
+
+def normalize_answer(text: str) -> str:
+    """Normalize answer following LoCoMo's normalize_answer() function.
+
+    - Remove commas
+    - Remove articles (a, an, the, and)
+    - Remove punctuation
+    - Normalize whitespace
+    - Lowercase
+    """
+    if not isinstance(text, str):
+        text = str(text)
+
+    # Lowercase
+    text = text.lower()
+
+    # Remove punctuation
+    text = text.translate(str.maketrans('', '', string.punctuation))
+
+    # Split and remove articles
+    articles = {'a', 'an', 'the', 'and'}
+    words = text.split()
+    words = [w for w in words if w not in articles]
+
+    # Rejoin with single spaces
+    return ' '.join(words)
+
+
+def simple_stem(word: str) -> str:
+    """Simple stemming: remove common suffixes.
+
+    This is a simplified version - LoCoMo uses Porter Stemmer.
+    For full compatibility, use nltk.stem.porter.PorterStemmer.
+    """
+    if len(word) > 4 and word.endswith('ing'):
+        return word[:-3]
+    if len(word) > 3 and word.endswith('ed'):
+        return word[:-2]
+    if len(word) > 2 and word.endswith('s') and not word.endswith('ss'):
+        return word[:-1]
+    if len(word) > 3 and word.endswith('ly'):
+        return word[:-2]
+    return word
+
+
+def tokenize(text: str, stemming: bool = True) -> List[str]:
+    """Tokenize and normalize text following LoCoMo methodology."""
+    normalized = normalize_answer(text)
+    words = [w for w in normalized.split() if len(w) > 0]
+    if stemming:
+        words = [simple_stem(w) for w in words]
+    return words
+
+
+def compute_token_f1(prediction: str, ground_truth: str, stemming: bool = True) -> float:
+    """Compute token-level F1 score (LoCoMo's primary metric).
+
+    Stemmed token overlap with precision/recall calculation.
+    """
+    pred_tokens = set(tokenize(prediction, stemming=stemming))
+    truth_tokens = set(tokenize(ground_truth, stemming=stemming))
+
+    if not pred_tokens or not truth_tokens:
+        return 0.0
+
+    intersection = pred_tokens & truth_tokens
+    precision = len(intersection) / len(pred_tokens) if pred_tokens else 0.0
+    recall = len(intersection) / len(truth_tokens) if truth_tokens else 0.0
+
+    if precision + recall == 0:
+        return 0.0
+
+    return 2 * (precision * recall) / (precision + recall)
+
+
+# Phrases indicating "no information available" for adversarial questions
+ADVERSARIAL_PHRASES = [
+    "no information",
+    "cannot determine",
+    "not mentioned",
+    "unknown",
+    "cannot be determined",
+    "no answer",
+    "not available",
+    "insufficient information"
+]
+
+
+def compute_adversarial_score(prediction: str, ground_truth: str) -> float:
+    """Score adversarial questions (category 5).
+
+    Returns 1.0 if prediction indicates 'no information available'.
+    """
+    pred_lower = prediction.lower()
+    for phrase in ADVERSARIAL_PHRASES:
+        if phrase in pred_lower:
+            return 1.0
+    return 0.0
+
+
+def compute_multi_answer_f1(prediction: str, ground_truth: str) -> float:
+    """Compute F1 for comma-separated multi-part answers.
+
+    LoCoMo splits on commas and returns max F1 across parts.
+    """
+    gt_string = str(ground_truth)
+    gt_parts = [p.strip() for p in gt_string.split(',') if p.strip()]
+
+    if not gt_parts:
+        return 0.0
+
+    # Return max F1 across all parts (generous matching)
+    f1_scores = [compute_token_f1(prediction, part) for part in gt_parts]
+    return max(f1_scores)
+
+
+def compute_category_f1(prediction: str, ground_truth: str, category: int) -> float:
+    """Compute F1 score with category-specific handling per LoCoMo spec.
+
+    - Categories 2,3,4 (temporal, commonsense, multi_hop): direct F1
+    - Category 1 (single_hop): F1 with comma-split partial matching
+    - Category 5 (adversarial): binary check for 'no information' phrases
+    """
+    if category == 5:
+        return compute_adversarial_score(prediction, ground_truth)
+    elif category == 1:
+        # Single-hop may have comma-separated answers
+        return compute_multi_answer_f1(prediction, ground_truth)
+    else:
+        # Standard F1 for categories 2, 3, 4
+        return compute_token_f1(prediction, ground_truth)
+
 
 # ============================================================================
 # XM Tool Execution
@@ -236,7 +382,7 @@ def call_llm_with_tools(messages: List[Dict], tools: List[Dict], system: str, ma
                     },
                     json={
                         "model": MODEL,
-                        "max_tokens": max_tokens,
+                        "max_completion_tokens": max_tokens,
                         "messages": openai_messages,
                         "tools": openai_tools if openai_tools else None
                     },
@@ -925,7 +1071,7 @@ Respond with JSON: {{"reasoning": "brief explanation", "label": "CORRECT or WRON
                     },
                     json={
                         "model": MODEL,
-                        "max_tokens": 100,
+                        "max_completion_tokens": 100,
                         "messages": [{"role": "user", "content": prompt}]
                     },
                     timeout=30
@@ -1024,7 +1170,8 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     print("\nThe agent will query its memories to answer questions.\n")
 
     qa_pairs = [qa for qa in conv["qa"] if qa["category"] != 5][:limit]
-    results: List[Tuple[int, int]] = []
+    # Results: (category, llm_judge_score, f1_score)
+    results: List[Tuple[int, int, float]] = []
 
     for i, qa in enumerate(qa_pairs, 1):
         question = qa["question"]
@@ -1037,26 +1184,53 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         # Get agent's answer
         generated = answer_with_agent(question, verbose)
 
-        # Judge
-        score = judge_answer(question, gold, generated)
+        # Compute F1 score (LoCoMo primary metric)
+        f1 = compute_category_f1(generated, gold, category)
+
+        # LLM Judge (secondary metric)
+        llm_score = judge_answer(question, gold, generated)
 
         gold_display = gold[:45] + "..." if len(gold) > 45 else gold
         gen_display = generated[:50] + "..." if len(generated) > 50 else generated
 
         print(f"  Expected: {gold_display}")
         print(f"  Got:      {gen_display}")
-        print(f"  {'✓ CORRECT' if score == 1 else '✗ WRONG'}")
+        print(f"  F1: {f1:.3f} | Judge: {'✓ CORRECT' if llm_score == 1 else '✗ WRONG'}")
 
-        results.append((category, score))
+        results.append((category, llm_score, f1))
 
     # Print results
     print(f"\n{'='*70}")
-    print("RESULTS: Agentic Memory")
+    print("RESULTS: Agentic Memory (LoCoMo-aligned)")
     print(f"{'='*70}\n")
 
     print(f"Memory Stats: {ingest_stats['total_memories']} memories stored")
     print(f"By type: {ingest_stats['by_type']}\n")
 
+    # Primary metric: F1 (LoCoMo specification)
+    print("=" * 65)
+    print("F1 SCORES (LoCoMo Primary Metric)")
+    print("=" * 65)
+    print(f"{'Category':<15} {'Avg F1':>10} {'Total':>8}")
+    print("-" * 35)
+
+    category_f1s = {}
+    for cat_num in [1, 2, 3, 4]:
+        cat_results = [r for r in results if r[0] == cat_num]
+        if cat_results:
+            avg_f1 = sum(r[2] for r in cat_results) / len(cat_results)
+            category_f1s[cat_num] = avg_f1
+            print(f"{CATEGORY_NAMES[cat_num]:<15} {avg_f1:>10.3f} {len(cat_results):>8}")
+
+    print("-" * 35)
+    total_count = len(results)
+    overall_f1 = sum(r[2] for r in results) / total_count if total_count > 0 else 0
+    print(f"{'OVERALL':<15} {overall_f1:>10.3f} {total_count:>8}\n")
+
+    # Secondary metric: LLM Judge accuracy
+    print("=" * 65)
+    print("LLM JUDGE SCORES (Binary Accuracy)")
+    print("=" * 65)
     print(f"{'Category':<15} {'Correct':>10} {'Total':>8} {'Accuracy':>10}")
     print("-" * 47)
 
@@ -1077,8 +1251,10 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     return {
         "memory_stats": ingest_stats,
         "total": total,
-        "correct": correct,
-        "accuracy": accuracy
+        "correct_judge": correct,
+        "judge_accuracy": accuracy,
+        "overall_f1": overall_f1,
+        "f1_by_category": category_f1s
     }
 
 
@@ -1131,9 +1307,15 @@ def main():
 
     args = parser.parse_args()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY not set")
-        sys.exit(1)
+    # Check for appropriate API key based on provider
+    if API_PROVIDER == "openai":
+        if not os.environ.get("OPENAI_API_KEY"):
+            print("Error: OPENAI_API_KEY not set")
+            sys.exit(1)
+    else:
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            print("Error: ANTHROPIC_API_KEY not set")
+            sys.exit(1)
 
     if args.ingest_only:
         run_ingest_only(store_path=args.store, verbose=not args.quiet)
