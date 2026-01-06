@@ -1,0 +1,30 @@
+# Rust build artifacts
+/target/
+
+# macOS
+.DS_Store
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-*
+
+# Guile compiled files
+*.go
+*.scmc
+
+# Test artifacts
+/tmp/
+*.log
+
+# Environment files
+.env
+.envrc
+
+# Generated files
+*.dylib
+*.so
+*.a
