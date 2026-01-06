@@ -1,0 +1,103 @@
+{
+  "timestamp": "2026-01-07T10:03:35.820099",
+  "model": "gpt-4o-mini-2024-07-18",
+  "api_provider": "openai",
+  "limit": 5,
+  "conversation_id": "conv-26",
+  "memory_stats": {
+    "total_memories": 154,
+    "total_connections": 0,
+    "by_type": {
+      "person": 2,
+      "event": 56,
+      "fact": 60,
+      "preference": 17,
+      "relationship": 4,
+      "statement": 15
+    }
+  },
+  "summary": {
+    "total_questions": 5,
+    "overall_f1": 0.1458,
+    "judge_correct": 4,
+    "judge_accuracy": 80.0,
+    "f1_by_category": {
+      "single_hop": 0.0963,
+      "temporal": 0.25,
+      "commonsense": 0.0364
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "generated": "Caroline attended the LGBTQ support group on May 7, 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:3"
+      ],
+      "f1_score": 0.5,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 2,
+      "question": "When did Melanie paint a sunrise?",
+      "expected": "2022",
+      "generated": "Melanie painted a lake sunrise on May 8, 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:12"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 3,
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "generated": "Based on the memories regarding Caroline, she would likely pursue fields related to:\n\n1. **Mental Health**: She has expressed a keen interest in counseling or working in mental health.\n2. **LGBTQ+ Advocacy**: Caroline is involved in LGBTQ+ support groups and emphasizes inclusivity, which suggests interests in social work or advocacy.\n3. **Adoption Services**: She is currently researching adoption agencies and is interested in providing a loving home for children in need.\n\nOverall, Caroline's pursuits are likely to align with counseling, mental health, social work, and adoption advocacy.",
+      "category": 3,
+      "category_name": "commonsense",
+      "evidence": [
+        "D1:9",
+        "D1:11"
+      ],
+      "f1_score": 0.0364,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 4,
+      "question": "What did Caroline research?",
+      "expected": "Adoption agencies",
+      "generated": "Caroline is researching adoption agencies, and she supports LGBTQ+ inclusivity in the adoption process. She aims to provide a loving home for children who need it.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D2:8"
+      ],
+      "f1_score": 0.1739,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 5,
+      "question": "What is Caroline's identity?",
+      "expected": "Transgender woman",
+      "generated": "Caroline's identity is shaped by several key aspects:\n\n1. **Transgender Journey**: Caroline has been transitioning for three years as of June 2023, which reflects her identity as a transgender individual. She has been open about her experiences and encourages others to engage with the LGBTQ community.\n\n2. **Advocate for LGBTQ+ Inclusivity**: She actively supports LGBTQ+ inclusivity, particularly in the context of adoption processes. Caroline is researching adoption agencies and aspires to provide a loving home for children who need it.\n\n3. **Mental Health Aspiration**: She has shown a keen interest in counseling or working in the mental health field, aiming to help others, reflecting her compassionate nature.\n\n4. **Community Engagement**: Caroline values sharing her experiences and promoting understanding and acceptance, which highlights her commitment to community and inclusivity.\n\n5. **Friendship and Support**: She has built strong relationships with friends, having known them for four years since she moved from her home country in June 2019, and she shares a supportive bond with her friend Melanie.\n\nOverall, Caroline's identity is one of courage, compassion, and advocacy within the LGBTQ community.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D1:5"
+      ],
+      "f1_score": 0.0187,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    }
+  ]
+}

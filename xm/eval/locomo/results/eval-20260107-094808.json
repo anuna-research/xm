@@ -1,0 +1,103 @@
+{
+  "timestamp": "2026-01-07T09:48:08.913443",
+  "model": "gpt-4o-mini-2024-07-18",
+  "api_provider": "openai",
+  "limit": 5,
+  "conversation_id": "conv-26",
+  "memory_stats": {
+    "total_memories": 165,
+    "total_connections": 0,
+    "by_type": {
+      "person": 8,
+      "event": 55,
+      "statement": 18,
+      "fact": 62,
+      "preference": 17,
+      "relationship": 5
+    }
+  },
+  "summary": {
+    "total_questions": 5,
+    "overall_f1": 0.1309,
+    "judge_correct": 5,
+    "judge_accuracy": 100.0,
+    "f1_by_category": {
+      "single_hop": 0.0556,
+      "temporal": 0.25,
+      "commonsense": 0.0435
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "generated": "Caroline attended the LGBTQ support group on May 7, 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:3"
+      ],
+      "f1_score": 0.5,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 2,
+      "question": "When did Melanie paint a sunrise?",
+      "expected": "2022",
+      "generated": "Melanie painted a lake sunrise last year, specifically on May 8, 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:12"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 3,
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "generated": "Caroline would likely pursue fields in counseling or mental health, as she has expressed a keen interest in supporting individuals with similar issues and has attended supportive groups that focus on these areas. Additionally, she is looking into adoption agencies that work with LGBTQ+ individuals, suggesting an interest in social services and advocacy within the community.",
+      "category": 3,
+      "category_name": "commonsense",
+      "evidence": [
+        "D1:9",
+        "D1:11"
+      ],
+      "f1_score": 0.0435,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 4,
+      "question": "What did Caroline research?",
+      "expected": "Adoption agencies",
+      "generated": "Caroline researched adoption agencies, specifically looking into one that helps LGBTQ+ individuals with adoption. She is motivated by her goal to give children a loving home and is excited about the prospect of creating a family for kids in need.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D2:8"
+      ],
+      "f1_score": 0.1111,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 5,
+      "question": "What is Caroline's identity?",
+      "expected": "Transgender woman",
+      "generated": "Caroline is a person who is actively involved in LGBTQ support and is passionate about counseling and mental health. She attended an LGBTQ support group, found it powerful and inspiring, and aims to support individuals with similar experiences. Caroline is also looking into adoption agencies that assist LGBTQ+ individuals, with the goal of creating a loving family for children in need. Furthermore, she began her transition on June 9, 2020, and has shared her journey by speaking about it at events. Her friends, family, and mentors are a significant support system for her, motivating her in her endeavors.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D1:5"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    }
+  ]
+}

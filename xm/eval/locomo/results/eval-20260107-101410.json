@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-01-07T10:14:10.530827",
+  "git_hash": "befd5ff6810e737f2573c1d2906331bd98d54f5a",
+  "model": "gpt-4o-mini-2024-07-18",
+  "api_provider": "openai",
+  "limit": 5,
+  "conversation_id": "conv-26",
+  "memory_stats": {
+    "total_memories": 156,
+    "total_connections": 0,
+    "by_type": {
+      "person": 6,
+      "event": 57,
+      "statement": 11,
+      "fact": 59,
+      "preference": 19,
+      "relationship": 4
+    }
+  },
+  "summary": {
+    "total_questions": 5,
+    "overall_f1": 0.19,
+    "judge_correct": 5,
+    "judge_accuracy": 100.0,
+    "f1_by_category": {
+      "single_hop": 0.059,
+      "temporal": 0.3929,
+      "commonsense": 0.0465
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "generated": "Caroline attended the LGBTQ support group on **7 May 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:3"
+      ],
+      "f1_score": 0.5,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 2,
+      "question": "When did Melanie paint a sunrise?",
+      "expected": "2022",
+      "generated": "Melanie painted a lake sunrise in 2022.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:12"
+      ],
+      "f1_score": 0.2857,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 3,
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "generated": "Caroline would likely pursue fields related to counseling or mental health, as she has expressed a keen interest in these areas. Additionally, her involvement in LGBTQ support groups and her aspirations to create a loving home for adopted children suggest she may also explore related fields in social work or advocacy.",
+      "category": 3,
+      "category_name": "commonsense",
+      "evidence": [
+        "D1:9",
+        "D1:11"
+      ],
+      "f1_score": 0.0465,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 4,
+      "question": "What did Caroline research?",
+      "expected": "Adoption agencies",
+      "generated": "Caroline is researching adoption agencies, motivated by her dream to have a family and provide a loving home for children in need. She has chosen an adoption agency that specifically supports LGBTQ+ individuals, as she aims to create a safe and loving environment for adopted kids, even as a single parent.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D2:8"
+      ],
+      "f1_score": 0.1,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 5,
+      "question": "What is Caroline's identity?",
+      "expected": "Transgender woman",
+      "generated": "Caroline's identity includes several key aspects:\n\n1. **Transgender Journey**: Caroline is a transgender individual who began transitioning on June 9, 2020. She has actively shared her journey and experiences, encouraging students to get involved in the LGBTQ community.\n\n2. **Supportive Community Involvement**: She attended a powerful and inspiring LGBTQ support group and expressed that the stories she heard there inspired her. Through this group, she gained courage and felt accepted, which has been significant in her journey toward self-embrace.\n\n3. **Career Aspirations**: Caroline is interested in counseling or working in mental health, indicating a strong desire to help others similar to her experiences.\n\n4. **Dream of Parenthood**: Caroline is researching adoption agencies that support LGBTQ+ individuals, with the aspiration of providing a loving home for children in need, aiming to be a single parent.\n\n5. **Friendships**: She has built a close-knit group of friends whom she has known for four years since moving from her home country in 2019. \n\nOverall, Caroline embodies resilience, community support, and aspirations for both her career and personal life.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D1:5"
+      ],
+      "f1_score": 0.018,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    }
+  ]
+}
