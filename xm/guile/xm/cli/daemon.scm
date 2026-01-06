@@ -6,11 +6,23 @@
 ;;; This module implements the daemon management from SPEC-029 Section 5.18.
 ;;; The daemon provides the Goblins runtime, manages the store, and handles
 ;;; OCapN networking.
+;;;
+;;; ARCHITECTURE:
+;;;
+;;; The xm daemon runs a Goblins vat that hosts:
+;;; 1. ^cap-registry - Manages capability actor registration
+;;; 2. ^graph-facet actors - Capability facets for graph access
+;;; 3. OCapN mycapn - Network capability coordinator
+;;;
+;;; CLI commands communicate with the daemon via Unix socket using JSON-RPC.
+;;; For network capability sharing, the daemon registers actors with OCapN
+;;; and returns sturdyref URIs.
 
 (define-module (xm cli daemon)
   #:use-module (ice-9 format)
   #:use-module (ice-9 popen)
   #:use-module (ice-9 rdelim)
+  #:use-module (ice-9 threads)
   #:use-module (srfi srfi-19)
   #:use-module (xm cli output)
   #:export (;; Daemon management
@@ -18,6 +30,7 @@
             daemon-stop
             daemon-restart
             daemon-status
+            daemon-running?
             ensure-daemon-running
 
             ;; Daemon client
@@ -27,7 +40,11 @@
             ;; Paths
             daemon-socket-path
             daemon-pid-path
-            daemon-log-path))
+            daemon-log-path
+            daemon-sturdyref-path
+
+            ;; RPC client
+            daemon-rpc))
 
 ;;; --------------------------------------------------------------------
 ;;; Path Configuration
@@ -51,6 +68,10 @@
 (define (daemon-log-path)
   "Get path to daemon log file."
   (string-append (xm-data-dir) "/daemon.log"))
+
+(define (daemon-sturdyref-path)
+  "Get path to sturdyref registry file (persists label->sturdyref mappings)."
+  (string-append (xm-data-dir) "/sturdyrefs.json"))
 
 ;;; --------------------------------------------------------------------
 ;;; Daemon Status
@@ -160,29 +181,324 @@
   (daemon-start))
 
 ;;; --------------------------------------------------------------------
-;;; Daemon Loop (Placeholder)
+;;; Daemon Loop with Goblins/OCapN
 ;;; --------------------------------------------------------------------
 
+;; Dynamic bindings - these will be set when daemon starts
+(define *daemon-vat* #f)
+(define *daemon-mycapn* #f)
+(define *daemon-cap-registry* #f)
+(define *daemon-running* #f)
+(define *daemon-socket* #f)
+
 (define (run-daemon-loop)
-  "Main daemon loop - sets up Goblins actors and listens for connections.
-   This is a placeholder that will be replaced with actual Goblins runtime."
+  "Main daemon loop - sets up Goblins actors and listens for connections."
 
   (format #t "xm daemon starting at ~a\n"
           (date->string (current-date) "~Y-~m-~d ~H:~M:~S"))
 
-  ;; In production, this would:
-  ;; 1. Initialize Goblins vat
-  ;; 2. Spawn core actors (gatekeeper, cap-store, journal, etc.)
-  ;; 3. Open Unix socket for local CLI communication
-  ;; 4. Optionally start OCapN listeners
+  ;; Load Goblins modules dynamically (so CLI doesn't require Goblins)
+  (let ((goblins-loaded?
+         (catch #t
+           (lambda ()
+             (eval '(begin
+                      (use-modules (goblins))
+                      (use-modules (goblins actor-lib methods))
+                      (use-modules (goblins ocapn captp))
+                      (use-modules (goblins ocapn ids))
+                      #t)
+                   (interaction-environment)))
+           (lambda (key . args)
+             (format (current-error-port)
+                     "Warning: Goblins not available: ~a ~a\n" key args)
+             #f))))
 
-  ;; For now, just sleep and respond to signals
+    (if (not goblins-loaded?)
+        ;; Fall back to simple socket server without OCapN
+        (run-simple-daemon-loop)
+        ;; Full Goblins/OCapN daemon
+        (run-goblins-daemon-loop))))
+
+(define (run-simple-daemon-loop)
+  "Run daemon without Goblins (legacy mode)."
+  (format #t "Running in legacy mode (no Goblins/OCapN)\n")
+
+  ;; Set up Unix socket server
+  (set! *daemon-running* #t)
+  (setup-socket-server)
+
+  ;; Main loop - handle socket connections
   (let loop ()
-    (sleep 60)
-    (loop)))
+    (when *daemon-running*
+      (handle-socket-connections)
+      (loop)))
+
+  (cleanup-socket))
+
+(define (run-goblins-daemon-loop)
+  "Run daemon with full Goblins/OCapN support."
+  (format #t "Initializing Goblins runtime...\n")
+
+  ;; These are evaluated at runtime to avoid compile-time dependency
+  (let* ((spawn-vat (eval 'spawn-vat (resolve-module '(goblins))))
+         (with-vat (eval 'with-vat (resolve-module '(goblins))))
+         (spawn (eval 'spawn (resolve-module '(goblins))))
+         (spawn-mycapn (eval 'spawn-mycapn (resolve-module '(goblins ocapn captp))))
+         (make-tcp-tls-netlayer
+          (catch #t
+            (lambda ()
+              (eval 'make-tcp-tls-netlayer
+                    (resolve-module '(goblins ocapn netlayers tcp-tls))))
+            (lambda _ #f))))
+
+    ;; Create the main vat
+    (set! *daemon-vat* (spawn-vat))
+
+    ;; Create OCapN mycapn with a netlayer
+    (set! *daemon-mycapn*
+          (with-vat *daemon-vat*
+            (if make-tcp-tls-netlayer
+                (let ((netlayer (make-tcp-tls-netlayer
+                                 #:host "127.0.0.1"
+                                 #:port 9323)))
+                  (format #t "OCapN listening on tcp-tls://127.0.0.1:9323\n")
+                  (spawn-mycapn netlayer))
+                (begin
+                  (format #t "No netlayer available, OCapN disabled\n")
+                  #f))))
+
+    ;; Create capability registry actor
+    (set! *daemon-cap-registry*
+          (with-vat *daemon-vat*
+            (spawn (make-cap-registry-actor))))
+
+    (format #t "Goblins runtime initialized\n"))
+
+  ;; Set up Unix socket server for CLI communication
+  (set! *daemon-running* #t)
+  (setup-socket-server)
+
+  (format #t "Daemon ready, listening on ~a\n" (daemon-socket-path))
+
+  ;; Main loop - process Goblins events and socket connections
+  (let loop ()
+    (when *daemon-running*
+      ;; Handle socket connections (with timeout for event loop)
+      (handle-socket-connections)
+      (loop)))
+
+  (cleanup-socket)
+  (format #t "Daemon stopped\n"))
+
+(define (make-cap-registry-actor)
+  "Create the ^cap-registry actor constructor.
+   Returns an actor constructor function."
+  (let ((methods-proc (eval 'methods (resolve-module '(goblins actor-lib methods)))))
+    ;; State: label -> (cap-actor-ref . sturdyref-uri)
+    (let ((registry (make-hash-table))
+          (uri->label (make-hash-table)))
+
+      (methods-proc
+       ;; Register a capability actor and optionally get sturdyref
+       [(register label cap-actor)
+        (hash-set! registry label (cons cap-actor #f))
+        `((label . ,label)
+          (registered . #t))]
+
+       ;; Register with OCapN to get sturdyref
+       [(export label)
+        (let ((entry (hash-ref registry label #f)))
+          (if (not entry)
+              `((error . "capability not registered"))
+              (if *daemon-mycapn*
+                  (let* ((<- (eval '<- (resolve-module '(goblins))))
+                         (on (eval 'on (resolve-module '(goblins))))
+                         (ocapn-id->string
+                          (eval 'ocapn-id->string
+                                (resolve-module '(goblins ocapn ids))))
+                         (cap-actor (car entry)))
+                    (on (<- *daemon-mycapn* 'register cap-actor)
+                        (lambda (sref)
+                          (let ((uri (ocapn-id->string sref)))
+                            (hash-set! registry label (cons cap-actor uri))
+                            (hash-set! uri->label uri label)
+                            ;; Persist to file
+                            (persist-sturdyref-registry registry)
+                            `((label . ,label)
+                              (sturdyref . ,uri))))))
+                  `((error . "OCapN not available")))))]
+
+       ;; Lookup capability by label
+       [(lookup label)
+        (let ((entry (hash-ref registry label #f)))
+          (if entry
+              `((label . ,label)
+                (sturdyref . ,(cdr entry)))
+              #f))]
+
+       ;; Enliven a sturdyref URI
+       [(enliven uri)
+        (if *daemon-mycapn*
+            (let* ((<- (eval '<- (resolve-module '(goblins))))
+                   (string->ocapn-id
+                    (eval 'string->ocapn-id
+                          (resolve-module '(goblins ocapn ids)))))
+              (<- *daemon-mycapn* 'enliven (string->ocapn-id uri)))
+            `((error . "OCapN not available")))]
+
+       ;; List all registered capabilities
+       [(list-all)
+        (hash-map->list
+         (lambda (label entry)
+           `((label . ,label)
+             (sturdyref . ,(cdr entry))))
+         registry)]))))
+
+(define (persist-sturdyref-registry registry)
+  "Persist sturdyref registry to file."
+  (catch #t
+    (lambda ()
+      (call-with-output-file (daemon-sturdyref-path)
+        (lambda (port)
+          (let ((entries (hash-map->list
+                          (lambda (k v)
+                            (cons k (cdr v))) ; label -> uri
+                          registry)))
+            ;; Simple JSON output
+            (display "{\n" port)
+            (let loop ((entries entries) (first #t))
+              (when (pair? entries)
+                (unless first (display ",\n" port))
+                (let ((entry (car entries)))
+                  (format port "  ~s: ~s"
+                          (car entry)
+                          (or (cdr entry) 'null)))
+                (loop (cdr entries) #f)))
+            (display "\n}\n" port)))))
+    (lambda (key . args)
+      (format (current-error-port)
+              "Warning: Failed to persist sturdyref registry: ~a\n" key))))
 
 ;;; --------------------------------------------------------------------
-;;; Daemon Client
+;;; Socket Server (for CLI communication)
+;;; --------------------------------------------------------------------
+
+(define (setup-socket-server)
+  "Set up Unix socket server."
+  (let ((sock-path (daemon-socket-path)))
+    ;; Remove old socket if exists
+    (when (file-exists? sock-path)
+      (delete-file sock-path))
+
+    ;; Create server socket
+    (set! *daemon-socket* (socket PF_UNIX SOCK_STREAM 0))
+    (bind *daemon-socket* AF_UNIX sock-path)
+    (listen *daemon-socket* 5)
+
+    ;; Set socket to non-blocking for event loop integration
+    (fcntl *daemon-socket* F_SETFL (logior O_NONBLOCK
+                                            (fcntl *daemon-socket* F_GETFL)))))
+
+(define (handle-socket-connections)
+  "Handle incoming socket connections (non-blocking)."
+  (catch 'system-error
+    (lambda ()
+      (let ((client (accept *daemon-socket*)))
+        (when client
+          (let ((client-sock (car client)))
+            ;; Handle client in a thread or inline
+            (catch #t
+              (lambda ()
+                (handle-client-request client-sock))
+              (lambda (key . args)
+                (format (current-error-port)
+                        "Client error: ~a ~a\n" key args)))
+            (close-port client-sock)))))
+    (lambda (key . args)
+      ;; EAGAIN/EWOULDBLOCK is normal for non-blocking socket
+      (let ((errno (system-error-errno args)))
+        (when (not (or (= errno EAGAIN) (= errno EWOULDBLOCK)))
+          (format (current-error-port)
+                  "Socket error: ~a ~a\n" key args)))
+      ;; Small sleep to avoid busy-waiting
+      (usleep 10000))))
+
+(define (handle-client-request sock)
+  "Handle a client request on SOCK."
+  (let ((line (read-line sock)))
+    (unless (eof-object? line)
+      (let* ((request (catch #t
+                        (lambda () (json->scm line))
+                        (lambda _ `((error . "invalid JSON")))))
+             (method (assoc-ref request "method"))
+             (params (or (assoc-ref request "params") '()))
+             (response (dispatch-daemon-method method params)))
+        ;; Send response
+        (display (scm->json response) sock)
+        (display "\n" sock)
+        (force-output sock)))))
+
+(define (dispatch-daemon-method method params)
+  "Dispatch a daemon RPC method."
+  (case (and method (string->symbol method))
+    ((ping) `((result . "pong")))
+
+    ((cap-export)
+     (let ((label (assoc-ref params "label")))
+       (if (not label)
+           `((error . "missing label parameter"))
+           (daemon-cap-export label))))
+
+    ((cap-import)
+     (let ((uri (assoc-ref params "uri"))
+           (label (assoc-ref params "label")))
+       (if (not (and uri label))
+           `((error . "missing uri or label parameter"))
+           (daemon-cap-import uri label))))
+
+    ((cap-list)
+     (daemon-cap-list))
+
+    ((status)
+     `((result . ((running . #t)
+                  (ocapn . ,(if *daemon-mycapn* #t #f))
+                  (goblins . ,(if *daemon-vat* #t #f))))))
+
+    (else
+     `((error . ,(format #f "unknown method: ~a" method))))))
+
+(define (daemon-cap-export label)
+  "Export a capability via OCapN."
+  (if (not *daemon-mycapn*)
+      `((error . "OCapN not available - daemon running in legacy mode"))
+      ;; In production, this would lookup the capability and register it
+      ;; For now, return a placeholder showing the pattern
+      `((result . ((label . ,label)
+                   (message . "OCapN export not yet implemented"))))))
+
+(define (daemon-cap-import uri label)
+  "Import a capability from an OCapN sturdyref."
+  (if (not *daemon-mycapn*)
+      `((error . "OCapN not available - daemon running in legacy mode"))
+      ;; In production, this would enliven the sturdyref
+      `((result . ((label . ,label)
+                   (uri . ,uri)
+                   (message . "OCapN import not yet implemented"))))))
+
+(define (daemon-cap-list)
+  "List registered capabilities."
+  `((result . ((capabilities . ())))))
+
+(define (cleanup-socket)
+  "Clean up socket on shutdown."
+  (when *daemon-socket*
+    (close-port *daemon-socket*)
+    (set! *daemon-socket* #f))
+  (when (file-exists? (daemon-socket-path))
+    (delete-file (daemon-socket-path))))
+
+;;; --------------------------------------------------------------------
+;;; Daemon Client (for CLI to talk to daemon)
 ;;; --------------------------------------------------------------------
 
 (define (ensure-daemon-running)
@@ -215,6 +531,19 @@
           #f
           (json->scm response)))))
 
+(define (daemon-rpc method params)
+  "Make an RPC call to the daemon.
+   Returns response alist or #f on error."
+  (let ((sock (daemon-connect)))
+    (if (not sock)
+        #f
+        (let ((response (daemon-send-command
+                         sock
+                         `(("method" . ,method)
+                           ("params" . ,params)))))
+          (close-port sock)
+          response))))
+
 ;;; --------------------------------------------------------------------
 ;;; Utility Functions
 ;;; --------------------------------------------------------------------
@@ -228,3 +557,163 @@
   "Redirect FROM port to TO port."
   ;; In production, use dup2 or similar
   #t)
+
+;;; --------------------------------------------------------------------
+;;; JSON Utilities (simple implementation for daemon protocol)
+;;; --------------------------------------------------------------------
+
+(define (scm->json obj)
+  "Convert Scheme object to JSON string."
+  (cond
+   ((null? obj) "null")
+   ((eq? obj #t) "true")
+   ((eq? obj #f) "false")
+   ((number? obj) (number->string obj))
+   ((string? obj) (string-append "\"" (json-escape-string obj) "\""))
+   ((symbol? obj) (string-append "\"" (symbol->string obj) "\""))
+   ((pair? obj)
+    (if (and (pair? (car obj)) (not (list? (car obj))))
+        ;; Alist (object)
+        (string-append
+         "{"
+         (string-join
+          (map (lambda (kv)
+                 (string-append
+                  "\"" (if (string? (car kv)) (car kv) (format #f "~a" (car kv))) "\": "
+                  (scm->json (cdr kv))))
+               obj)
+          ", ")
+         "}")
+        ;; List (array)
+        (string-append
+         "["
+         (string-join (map scm->json obj) ", ")
+         "]")))
+   (else (format #f "\"~a\"" obj))))
+
+(define (json-escape-string str)
+  "Escape special characters in string for JSON."
+  (list->string
+   (let loop ((chars (string->list str)) (acc '()))
+     (if (null? chars)
+         (reverse acc)
+         (let ((c (car chars)))
+           (case c
+             ((#\") (loop (cdr chars) (append '(#\" #\\) acc)))
+             ((#\\) (loop (cdr chars) (append '(#\\ #\\) acc)))
+             ((#\newline) (loop (cdr chars) (append '(#\n #\\) acc)))
+             ((#\return) (loop (cdr chars) (append '(#\r #\\) acc)))
+             ((#\tab) (loop (cdr chars) (append '(#\t #\\) acc)))
+             (else (loop (cdr chars) (cons c acc)))))))))
+
+(define (json->scm str)
+  "Parse JSON string to Scheme object (simple parser)."
+  (let ((port (open-input-string str)))
+    (json-read port)))
+
+(define (json-read port)
+  "Read a JSON value from PORT."
+  (json-skip-whitespace port)
+  (let ((c (peek-char port)))
+    (cond
+     ((eof-object? c) c)
+     ((char=? c #\{) (json-read-object port))
+     ((char=? c #\[) (json-read-array port))
+     ((char=? c #\") (json-read-string port))
+     ((char=? c #\t) (json-read-true port))
+     ((char=? c #\f) (json-read-false port))
+     ((char=? c #\n) (json-read-null port))
+     ((or (char-numeric? c) (char=? c #\-))
+      (json-read-number port))
+     (else (error "Invalid JSON" c)))))
+
+(define (json-skip-whitespace port)
+  "Skip whitespace characters."
+  (let loop ()
+    (let ((c (peek-char port)))
+      (when (and (not (eof-object? c))
+                 (char-whitespace? c))
+        (read-char port)
+        (loop)))))
+
+(define (json-read-object port)
+  "Read JSON object."
+  (read-char port) ; consume {
+  (json-skip-whitespace port)
+  (if (char=? (peek-char port) #\})
+      (begin (read-char port) '())
+      (let loop ((result '()))
+        (json-skip-whitespace port)
+        (let* ((key (json-read-string port))
+               (_ (begin (json-skip-whitespace port)
+                         (read-char port))) ; consume :
+               (value (json-read port)))
+          (json-skip-whitespace port)
+          (let ((c (read-char port)))
+            (if (char=? c #\})
+                (reverse (cons (cons key value) result))
+                (loop (cons (cons key value) result))))))))
+
+(define (json-read-array port)
+  "Read JSON array."
+  (read-char port) ; consume [
+  (json-skip-whitespace port)
+  (if (char=? (peek-char port) #\])
+      (begin (read-char port) '())
+      (let loop ((result '()))
+        (let ((value (json-read port)))
+          (json-skip-whitespace port)
+          (let ((c (read-char port)))
+            (if (char=? c #\])
+                (reverse (cons value result))
+                (loop (cons value result))))))))
+
+(define (json-read-string port)
+  "Read JSON string."
+  (read-char port) ; consume opening "
+  (let loop ((chars '()))
+    (let ((c (read-char port)))
+      (cond
+       ((char=? c #\")
+        (list->string (reverse chars)))
+       ((char=? c #\\)
+        (let ((escaped (read-char port)))
+          (loop (cons (case escaped
+                        ((#\n) #\newline)
+                        ((#\r) #\return)
+                        ((#\t) #\tab)
+                        ((#\" #\\) escaped)
+                        (else escaped))
+                      chars))))
+       (else (loop (cons c chars)))))))
+
+(define (json-read-number port)
+  "Read JSON number."
+  (let loop ((chars '()))
+    (let ((c (peek-char port)))
+      (if (and (not (eof-object? c))
+               (or (char-numeric? c)
+                   (memv c '(#\- #\+ #\. #\e #\E))))
+          (begin
+            (read-char port)
+            (loop (cons c chars)))
+          (string->number (list->string (reverse chars)))))))
+
+(define (json-read-true port)
+  (read-char port) (read-char port) (read-char port) (read-char port) ; true
+  #t)
+
+(define (json-read-false port)
+  (read-char port) (read-char port) (read-char port) (read-char port) (read-char port) ; false
+  #f)
+
+(define (json-read-null port)
+  (read-char port) (read-char port) (read-char port) (read-char port) ; null
+  '())
+
+(define (string-join strs sep)
+  "Join strings with separator."
+  (if (null? strs) ""
+      (let loop ((strs (cdr strs)) (acc (car strs)))
+        (if (null? strs) acc
+            (loop (cdr strs) (string-append acc sep (car strs)))))))

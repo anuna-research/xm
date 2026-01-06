@@ -24,6 +24,7 @@
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
   #:use-module ((xm cli output) #:select (output-result output-error))
+  #:use-module ((xm cli daemon) #:select (daemon-running? daemon-rpc))
   #:use-module (xm store)
   #:use-module (xm vocabulary)
   #:export (handle-cap-command))
@@ -274,9 +275,12 @@
 ;;; --------------------------------------------------------------------
 
 (define (cmd-cap-export opts global-opts store)
-  "Export a capability as a shareable token."
+  "Export a capability as a shareable token.
+   If the daemon is running with OCapN, exports as a sturdyref URI.
+   Otherwise falls back to a local token (only works same-store)."
   (let* ((positional (assoc-ref opts 'positional))
-         (label-or-id (and (pair? positional) (car positional))))
+         (label-or-id (and (pair? positional) (car positional)))
+         (use-ocapn (assoc-ref opts "ocapn")))  ; --ocapn flag
 
     (unless label-or-id
       (output-error "MISSING_LABEL"
@@ -292,31 +296,83 @@
                           (format #f "No capability found: ~a" label-or-id)
                           global-opts)
             (exit 1))
-          (let ((token (generate-cap-token cap)))
-            (if (assoc-ref global-opts "json")
-                (output-result `((token . ,token)
-                                 (id . ,(assoc-ref cap 'id)))
-                               global-opts)
-                (begin
-                  (format #t "\nCapability exported: ~a\n\n" (assoc-ref cap 'id))
-                  (format #t "Token:\n~a\n\n" token)
-                  (format #t "Share this token to grant access.\n")
-                  (format #t "Import with: xm cap import '<token>' --label <name>\n"))))))))
+
+          ;; Try OCapN export if daemon is running or --ocapn flag
+          (if (or use-ocapn (daemon-running?))
+              (export-via-ocapn label-or-id cap global-opts)
+              ;; Fall back to local token
+              (export-local-token cap global-opts))))))
+
+(define (export-via-ocapn label cap global-opts)
+  "Export capability via OCapN daemon, returning sturdyref."
+  (let ((response (daemon-rpc "cap-export"
+                              `(("label" . ,label)))))
+    (if (not response)
+        (begin
+          (output-error "DAEMON_NOT_RUNNING"
+                        "Cannot connect to xm daemon"
+                        "Start daemon with: xm daemon start"
+                        global-opts)
+          (exit 1))
+        (let ((error (assoc-ref response "error"))
+              (result (assoc-ref response "result")))
+          (if error
+              (begin
+                (output-error "OCAPN_EXPORT_FAILED"
+                              error
+                              "Falling back to local token"
+                              global-opts)
+                ;; Fall back to local token
+                (export-local-token cap global-opts))
+              ;; Success - output sturdyref
+              (let ((sturdyref (assoc-ref result "sturdyref")))
+                (if sturdyref
+                    (if (assoc-ref global-opts "json")
+                        (output-result `((sturdyref . ,sturdyref)
+                                         (id . ,(assoc-ref cap 'id))
+                                         (type . "ocapn"))
+                                       global-opts)
+                        (begin
+                          (format #t "\nCapability exported via OCapN: ~a\n\n"
+                                  (or (assoc-ref cap 'label) (assoc-ref cap 'id)))
+                          (format #t "Sturdyref:\n~a\n\n" sturdyref)
+                          (format #t "Share this URI with other agents.\n")
+                          (format #t "Import with: xm cap import '<sturdyref>' --label <name>\n")))
+                    ;; No sturdyref in response, use local token
+                    (export-local-token cap global-opts))))))))
+
+(define (export-local-token cap global-opts)
+  "Export capability as local token (same-store only)."
+  (let ((token (generate-cap-token cap)))
+    (if (assoc-ref global-opts "json")
+        (output-result `((token . ,token)
+                         (id . ,(assoc-ref cap 'id))
+                         (type . "local"))
+                       global-opts)
+        (begin
+          (format #t "\nCapability exported (local token): ~a\n\n" (assoc-ref cap 'id))
+          (format #t "Token:\n~a\n\n" token)
+          (format #t "⚠️  Local token - only works within same store.\n")
+          (format #t "   For cross-agent sharing, start daemon: xm daemon start\n\n")
+          (format #t "Import with: xm cap import '<token>' --label <name>\n")))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap import
 ;;; --------------------------------------------------------------------
 
 (define (cmd-cap-import opts global-opts store)
-  "Import a capability from a token."
+  "Import a capability from a token or sturdyref.
+   Detects token type:
+   - ocapn:// URI -> import via OCapN (requires daemon)
+   - xmcap: local token -> import from same store"
   (let* ((positional (assoc-ref opts 'positional))
-         (token (and (pair? positional) (car positional)))
+         (token-or-uri (and (pair? positional) (car positional)))
          (label (or (assoc-ref opts "label") (assoc-ref opts "l"))))
 
-    (unless token
+    (unless token-or-uri
       (output-error "MISSING_TOKEN"
-                    "Capability token is required"
-                    "Usage: xm cap import <TOKEN> --label <LABEL>"
+                    "Capability token or sturdyref URI is required"
+                    "Usage: xm cap import <TOKEN|STURDYREF> --label <LABEL>"
                     global-opts)
       (exit 2))
 
@@ -327,42 +383,137 @@
                     global-opts)
       (exit 2))
 
-    ;; Parse token to get original capability ID
-    (let ((original-id (parse-cap-token token)))
-      (if (not original-id)
-          (begin
-            (output-error "INVALID_TOKEN"
-                          "Could not parse capability token"
-                          "Ensure the token is complete and valid"
-                          global-opts)
-            (exit 1))
-          ;; Look up the original capability to get its properties
-          (let ((original-cap (query-capability-by-label-or-id store original-id)))
-            (if (not original-cap)
-                (begin
-                  (output-error "CAP_NOT_FOUND"
-                                (format #f "Original capability not found: ~a" original-id)
-                                "The capability may have been revoked or deleted"
-                                global-opts)
-                  (exit 1))
-                (let* ((cap-id (generate-cap-id))
-                       (now (time->iso8601 (current-time time-utc)))
-                       (graphs (or (assoc-ref original-cap 'graphs) '()))
-                       (perms (or (assoc-ref original-cap 'permissions) '("read")))
-                       (expires (assoc-ref original-cap 'expires)))
-                  (store-insert-capability store cap-id label graphs perms expires now original-id)
-                  (if (assoc-ref global-opts "json")
-                      (output-result `((id . ,cap-id)
-                                       (label . ,label)
-                                       (graphs . ,graphs)
-                                       (permissions . ,perms)
-                                       (imported-from . ,original-id))
-                                     global-opts)
-                      (begin
-                        (format #t "\nCapability imported: ~a\n" label)
-                        (format #t "ID: ~a\n" cap-id)
-                        (format #t "Graphs: ~a\n" (string-join graphs ", "))
-                        (format #t "Permissions: ~a\n" (string-join perms ", ")))))))))))
+    ;; Detect token type
+    (cond
+     ;; OCapN sturdyref
+     ((is-sturdyref? token-or-uri)
+      (import-via-ocapn token-or-uri label global-opts store))
+
+     ;; Local token
+     ((string-prefix? "xmcap:" token-or-uri)
+      (import-local-token token-or-uri label global-opts store))
+
+     ;; Unknown format
+     (else
+      (output-error "INVALID_TOKEN"
+                    "Unrecognized token format"
+                    "Expected xmcap:... (local) or ocapn://... (network)"
+                    global-opts)
+      (exit 1)))))
+
+(define (is-sturdyref? str)
+  "Check if STR is an OCapN sturdyref URI."
+  (or (string-prefix? "ocapn://" str)
+      (string-prefix? "ocapn:" str)))
+
+(define (import-via-ocapn uri label global-opts store)
+  "Import capability via OCapN daemon."
+  (if (not (daemon-running?))
+      (begin
+        (output-error "DAEMON_NOT_RUNNING"
+                      "OCapN import requires xm daemon"
+                      "Start daemon with: xm daemon start"
+                      global-opts)
+        (exit 1))
+
+      (let ((response (daemon-rpc "cap-import"
+                                  `(("uri" . ,uri)
+                                    ("label" . ,label)))))
+        (if (not response)
+            (begin
+              (output-error "DAEMON_ERROR"
+                            "Failed to communicate with daemon"
+                            #f
+                            global-opts)
+              (exit 1))
+
+            (let ((error (assoc-ref response "error"))
+                  (result (assoc-ref response "result")))
+              (if error
+                  (begin
+                    (output-error "OCAPN_IMPORT_FAILED"
+                                  error
+                                  #f
+                                  global-opts)
+                    (exit 1))
+
+                  ;; Success - create local capability record
+                  ;; The daemon has enlivened the sturdyref, we store metadata
+                  (let* ((cap-id (generate-cap-id))
+                         (now (time->iso8601 (current-time time-utc))))
+                    ;; Store as remote capability
+                    (store-insert-remote-capability store cap-id label uri now)
+
+                    (if (assoc-ref global-opts "json")
+                        (output-result `((id . ,cap-id)
+                                         (label . ,label)
+                                         (sturdyref . ,uri)
+                                         (type . "ocapn"))
+                                       global-opts)
+                        (begin
+                          (format #t "\nCapability imported via OCapN: ~a\n" label)
+                          (format #t "ID: ~a\n" cap-id)
+                          (format #t "Remote: ~a\n" uri)
+                          (format #t "\nUse --cap ~a with queries to access remote graph.\n" label))))))))))
+
+(define (import-local-token token label global-opts store)
+  "Import capability from local token."
+  ;; Parse token to get original capability ID
+  (let ((original-id (parse-cap-token token)))
+    (if (not original-id)
+        (begin
+          (output-error "INVALID_TOKEN"
+                        "Could not parse capability token"
+                        "Ensure the token is complete and valid"
+                        global-opts)
+          (exit 1))
+        ;; Look up the original capability to get its properties
+        (let ((original-cap (query-capability-by-label-or-id store original-id)))
+          (if (not original-cap)
+              (begin
+                (output-error "CAP_NOT_FOUND"
+                              (format #f "Original capability not found: ~a" original-id)
+                              "The capability may have been revoked or deleted"
+                              global-opts)
+                (exit 1))
+              (let* ((cap-id (generate-cap-id))
+                     (now (time->iso8601 (current-time time-utc)))
+                     (graphs (or (assoc-ref original-cap 'graphs) '()))
+                     (perms (or (assoc-ref original-cap 'permissions) '("read")))
+                     (expires (assoc-ref original-cap 'expires)))
+                (store-insert-capability store cap-id label graphs perms expires now original-id)
+                (if (assoc-ref global-opts "json")
+                    (output-result `((id . ,cap-id)
+                                     (label . ,label)
+                                     (graphs . ,graphs)
+                                     (permissions . ,perms)
+                                     (imported-from . ,original-id)
+                                     (type . "local"))
+                                   global-opts)
+                    (begin
+                      (format #t "\nCapability imported (local): ~a\n" label)
+                      (format #t "ID: ~a\n" cap-id)
+                      (format #t "Graphs: ~a\n" (string-join graphs ", "))
+                      (format #t "Permissions: ~a\n" (string-join perms ", "))))))))))
+
+(define (store-insert-remote-capability store id label sturdyref created)
+  "Insert a remote capability reference into the store."
+  (catch #t
+    (lambda ()
+      ;; Insert type triple
+      (store-insert-quad store id rdf:type xm:Capability #:graph cap-graph-uri)
+      ;; Insert label
+      (store-insert-quad store id xm:label label #:graph cap-graph-uri)
+      ;; Insert sturdyref as remote reference
+      (store-insert-quad store id (expand-uri "xm:sturdyref") sturdyref #:graph cap-graph-uri)
+      ;; Mark as remote
+      (store-insert-quad store id (expand-uri "xm:isRemote") "true" #:graph cap-graph-uri)
+      ;; Insert created timestamp
+      (store-insert-quad store id xm:created created #:graph cap-graph-uri)
+      ;; Persist changes
+      (store-persist store))
+    (lambda (key . args)
+      (format (current-error-port) "Error storing remote capability: ~a ~a~%" key args))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions
