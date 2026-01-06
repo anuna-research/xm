@@ -1,29 +1,35 @@
-;;; xm/gatekeeper.scm --- Graph Gatekeeper actor for capability-based access
+;;; xm/gatekeeper.scm --- Graph Gatekeeper actor for xm
 ;;;
 ;;; Copyright (C) 2026 Digital Services Team
 ;;; SPDX-License-Identifier: Apache-2.0
 ;;;
-;;; The Graph Gatekeeper is the central security actor in xm.
-;;; All Oxigraph access passes through here. It validates capabilities,
-;;; rewrites SPARQL queries to scope to allowed graphs, and enforces
-;;; read/write/admin permissions.
+;;; The Graph Gatekeeper is the core storage actor in xm. It provides:
+;;; - Direct access to Oxigraph SPARQL operations
+;;; - Public graph queries (no capability required)
+;;; - Internal methods called by capability facets
 ;;;
-;;; From SPEC-029 Section 4.1:
-;;; "All Oxigraph access passes through here"
+;;; CAPABILITY MODEL (per Spritely Goblins):
+;;;
+;;; The gatekeeper itself is NOT the capability. Instead:
+;;; 1. ^graph-facet actors wrap the gatekeeper with access restrictions
+;;; 2. The facet IS the capability - whoever has the actor reference can use it
+;;; 3. Attenuation = spawn facets with stricter constraints
+;;; 4. Network sharing = register facet with mycapn → get sturdyref
+;;;
+;;; See xm/capability.scm for the facet implementation.
 
 (define-module (xm gatekeeper)
   #:use-module (goblins)
   #:use-module (goblins actor-lib methods)
   #:use-module (srfi srfi-1)
-  #:use-module (srfi srfi-9)
   #:use-module (ice-9 match)
   #:use-module (ice-9 regex)
   #:use-module (ice-9 format)
   #:use-module (xm store)
-  #:use-module (xm capability)
   #:use-module (xm vocabulary)
   #:export (^graph-gatekeeper
-            public-graph-uri))
+            public-graph-uri
+            make-root-capability))
 
 ;;; --------------------------------------------------------------------
 ;;; Constants
@@ -39,7 +45,6 @@
 (define (rewrite-query-with-graphs sparql allowed-graphs)
   "Rewrite a SPARQL query to scope to allowed named graphs.
    Adds FROM <graph> clauses for SELECT/ASK/CONSTRUCT/DESCRIBE queries.
-   For UPDATE queries, validates graph targets.
 
    Example:
    Input:  SELECT ?s ?p ?o WHERE { ?s ?p ?o }
@@ -49,8 +54,8 @@
     (case query-type
       ((select ask construct describe)
        (add-from-clauses sparql allowed-graphs))
-      ((insert delete)
-       ;; UPDATE queries - validate graph targets in the query itself
+      ((insert delete update)
+       ;; UPDATE queries - passed through, graph validation done by facet
        sparql)
       (else
        (error "Unknown query type" sparql)))))
@@ -90,137 +95,175 @@
         ;; No WHERE clause - append FROM at end (for DESCRIBE without WHERE)
         (string-append sparql "\n" from-clauses))))
 
-(define (extract-update-graphs sparql)
-  "Extract graph URIs referenced in a SPARQL UPDATE query.
-   Returns a list of graph URIs found in GRAPH <uri> patterns."
-  (let ((matches (list-matches "GRAPH\\s*<([^>]+)>" sparql)))
-    (map (lambda (m) (match:substring m 1)) matches)))
-
-(define (list-matches pattern str)
-  "Return all regex matches of PATTERN in STR."
-  (let ((rx (make-regexp pattern regexp/icase)))
-    (let loop ((start 0) (acc '()))
-      (let ((m (regexp-exec rx str start)))
-        (if m
-            (loop (match:end m) (cons m acc))
-            (reverse acc))))))
+(define (string-join strs sep)
+  "Join strings with separator."
+  (if (null? strs)
+      ""
+      (let loop ((strs (cdr strs)) (acc (car strs)))
+        (if (null? strs)
+            acc
+            (loop (cdr strs) (string-append acc sep (car strs)))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Graph Gatekeeper Actor
 ;;; --------------------------------------------------------------------
 
-(define (^graph-gatekeeper bcom store cap-store)
+(define (^graph-gatekeeper bcom store)
   "Create a Graph Gatekeeper actor.
-   STORE: the Oxigraph store (from xm/store.scm)
-   CAP-STORE: the capability store actor
 
-   The gatekeeper validates all operations against capabilities and
-   rewrites queries to enforce graph-level access control."
+   STORE: the Oxigraph store (from xm/store.scm)
+
+   The gatekeeper provides two types of methods:
+
+   1. PUBLIC methods - callable by anyone with a gatekeeper reference
+      (query public graph, get stats)
+
+   2. INTERNAL methods - called by capability facets only
+      (suffixed with -internal, trust the caller has validated access)
+
+   Capability facets (^graph-facet) wrap this gatekeeper and enforce
+   access control before calling internal methods."
 
   (methods
-   ;; Execute a SPARQL SELECT/ASK/CONSTRUCT/DESCRIBE query
-   [(query cap-id sparql)
-    (let ((allowed-graphs (resolve-allowed-graphs bcom cap-store cap-id 'read)))
-      (when (null? allowed-graphs)
-        (error "No readable graphs in capability scope"))
-      (let ((scoped-query (rewrite-query-with-graphs sparql allowed-graphs)))
-        (store-query store scoped-query)))]
+   ;;; ================================================================
+   ;;; PUBLIC METHODS - No capability required
+   ;;; ================================================================
 
-   ;; Execute a SPARQL UPDATE query (INSERT DATA, DELETE DATA)
-   [(update cap-id sparql)
-    (let ((allowed-graphs (resolve-allowed-graphs bcom cap-store cap-id 'write)))
-      (when (null? allowed-graphs)
-        (error "No writable graphs in capability scope"))
-      ;; Validate that all graphs in the update are allowed
-      (let ((update-graphs (extract-update-graphs sparql)))
-        (for-each
-         (lambda (g)
-           (unless (member g allowed-graphs)
-             (error "Write to graph not allowed by capability" g)))
-         update-graphs))
-      (store-update store sparql))]
+   ;; Query the public graph only
+   [(public-query sparql)
+    (let ((scoped-query (rewrite-query-with-graphs sparql (list public-graph-uri))))
+      (store-query store scoped-query))]
 
-   ;; Insert triples into a specific graph
-   [(insert cap-id graph-uri triples-turtle)
-    (validate-graph-access bcom cap-store cap-id graph-uri 'write)
-    (store-load-graph store triples-turtle #:graph graph-uri #:format "turtle")]
-
-   ;; Delete triples matching a pattern from a graph
-   [(delete cap-id graph-uri pattern-sparql)
-    (validate-graph-access bcom cap-store cap-id graph-uri 'write)
-    (let ((delete-query (format #f "DELETE WHERE { GRAPH <~a> { ~a } }"
-                                graph-uri pattern-sparql)))
-      (store-update store delete-query))]
-
-   ;; Clear an entire graph (admin permission required)
-   [(clear-graph cap-id graph-uri)
-    (validate-graph-access bcom cap-store cap-id graph-uri 'admin)
-    (let ((clear-query (format #f "CLEAR GRAPH <~a>" graph-uri)))
-      (store-update store clear-query))]
-
-   ;; Dump a graph to RDF format
-   [(dump-graph cap-id graph-uri format)
-    (validate-graph-access bcom cap-store cap-id graph-uri 'read)
-    (store-dump-graph store #:graph graph-uri #:format format)]
+   ;; Insert into public graph (for bootstrapping/shared knowledge)
+   [(public-insert triples-turtle)
+    (store-load-graph store triples-turtle
+                      #:graph public-graph-uri
+                      #:format "turtle")]
 
    ;; Get store statistics
    [(stats)
     `((quad-count . ,(store-count store))
       (empty . ,(store-empty? store)))]
 
-   ;; Public query (no capability required, scoped to public graph)
-   [(public-query sparql)
-    (let ((scoped-query (rewrite-query-with-graphs sparql (list public-graph-uri))))
+   ;; Check if store is empty
+   [(empty?)
+    (store-empty? store)]
+
+   ;;; ================================================================
+   ;;; INTERNAL METHODS - Called by capability facets
+   ;;; ================================================================
+   ;;;
+   ;;; These methods TRUST the caller to have validated access rights.
+   ;;; They should only be called by ^graph-facet actors which enforce
+   ;;; the capability constraints.
+   ;;;
+   ;;; DO NOT expose these methods directly to untrusted code.
+
+   ;; Query with specific graphs (facet passes its allowed graphs)
+   [(query-with-graphs sparql allowed-graphs)
+    (let ((scoped-query (rewrite-query-with-graphs sparql allowed-graphs)))
       (store-query store scoped-query))]
 
-   ;; Insert into public graph (no capability required for public writes)
-   [(public-insert triples-turtle)
+   ;; Insert triples into a graph (facet has validated write access)
+   [(insert-internal graph-uri triples-turtle)
     (store-load-graph store triples-turtle
-                      #:graph public-graph-uri
-                      #:format "turtle")]))
+                      #:graph graph-uri
+                      #:format "turtle")]
+
+   ;; Execute SPARQL UPDATE (facet has validated write access)
+   [(update-internal sparql)
+    (store-update store sparql)]
+
+   ;; Delete triples matching pattern (facet has validated write access)
+   [(delete-internal graph-uri pattern-sparql)
+    (let ((delete-query (format #f "DELETE WHERE { GRAPH <~a> { ~a } }"
+                                graph-uri pattern-sparql)))
+      (store-update store delete-query))]
+
+   ;; Clear an entire graph (facet has validated admin access)
+   [(clear-graph-internal graph-uri)
+    (let ((clear-query (format #f "CLEAR GRAPH <~a>" graph-uri)))
+      (store-update store clear-query))]
+
+   ;; Dump a graph to RDF format (facet has validated read access)
+   [(dump-graph-internal graph-uri rdf-format)
+    (store-dump-graph store #:graph graph-uri #:format rdf-format)]
+
+   ;; Create a new named graph (facet has validated admin access)
+   [(create-graph-internal graph-uri)
+    ;; In SPARQL, creating a graph is implicit - insert empty to ensure it exists
+    (let ((create-query (format #f "CREATE SILENT GRAPH <~a>" graph-uri)))
+      (store-update store create-query))]
+
+   ;; List all named graphs in the store
+   [(list-graphs)
+    (store-query store "SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } }")]
+
+   ;;; ================================================================
+   ;;; CAPABILITY CREATION - Bootstrap method
+   ;;; ================================================================
+   ;;;
+   ;;; This method creates the root capability facet for a set of graphs.
+   ;;; It should be called once during initialization to create the
+   ;;; initial capability, which can then be attenuated and shared.
+
+   ;; Create a root capability facet for this gatekeeper
+   ;; Returns a ^graph-facet actor reference (THE CAPABILITY)
+   [(create-capability graphs ops #:optional label)
+    ;; Import the facet constructor dynamically to avoid circular deps
+    (let ((^graph-facet (@ (xm capability) ^graph-facet)))
+      ;; Spawn the facet - the returned actor reference IS the capability
+      (spawn ^graph-facet
+             ;; self is the gatekeeper this facet wraps
+             (actormap-peek (current-actormap) (lambda () bcom) #f)
+             graphs
+             ops
+             #:label label))]))
 
 ;;; --------------------------------------------------------------------
-;;; Helper Functions
+;;; Helper: Create Root Capability
 ;;; --------------------------------------------------------------------
 
-(define (resolve-allowed-graphs bcom cap-store cap-id permission)
-  "Resolve the list of graphs allowed for the given capability and permission.
-   Always includes the public graph for read operations.
-   Returns empty list if capability is invalid."
+(define* (make-root-capability gatekeeper graphs ops #:key label)
+  "Create a root capability facet for the gatekeeper.
 
-  (if (not cap-id)
-      ;; No capability - only public graph for reads
-      (if (eq? permission 'read)
-          (list public-graph-uri)
-          '())
-      ;; Validate capability and get allowed graphs
-      (let-values (((cap err) (<- cap-store 'validate cap-id)))
-        (if err
-            (error "Invalid capability" cap-id err)
-            (let ((graphs (capability-graphs cap)))
-              ;; Check if capability has required permission
-              (if (capability-has-permission? cap permission)
-                  ;; Add public graph for reads
-                  (if (eq? permission 'read)
-                      (delete-duplicates (cons public-graph-uri graphs))
-                      graphs)
-                  '()))))))
+   GATEKEEPER: the ^graph-gatekeeper actor reference
+   GRAPHS: list of graph URIs to grant access to
+   OPS: list of operations ('read 'write 'admin)
+   LABEL: optional human-readable label
 
-(define (validate-graph-access bcom cap-store cap-id graph-uri permission)
-  "Validate that capability allows the specified access to graph.
-   Raises an error if access is denied."
-  (let ((allowed-graphs (resolve-allowed-graphs bcom cap-store cap-id permission)))
-    (unless (member graph-uri allowed-graphs)
-      (error (format #f "Access denied: ~a permission to graph ~a"
-                     permission graph-uri)
-             cap-id graph-uri permission))))
+   Returns a ^graph-facet actor reference - THIS IS THE CAPABILITY.
+   Share this reference (or attenuated versions) to grant access."
 
-(define (delete-duplicates lst)
-  "Remove duplicate elements from a list."
-  (let loop ((lst lst) (seen '()) (result '()))
-    (if (null? lst)
-        (reverse result)
-        (let ((item (car lst)))
-          (if (member item seen)
-              (loop (cdr lst) seen result)
-              (loop (cdr lst) (cons item seen) (cons item result)))))))
+  ;; Import here to avoid module load order issues
+  (let ((^graph-facet (@ (xm capability) ^graph-facet)))
+    (spawn ^graph-facet gatekeeper graphs ops #:label label)))
+
+;;; --------------------------------------------------------------------
+;;; Usage Example
+;;; --------------------------------------------------------------------
+;;;
+;;; ;; Create the gatekeeper (once, at startup)
+;;; (define gatekeeper (spawn ^graph-gatekeeper store))
+;;;
+;;; ;; Create a root capability with full access
+;;; (define root-cap
+;;;   (make-root-capability gatekeeper
+;;;                         '("xm:graph/project/acme-api"
+;;;                           "xm:graph/project/web-frontend")
+;;;                         '(read write admin)
+;;;                         #:label "Root admin access"))
+;;;
+;;; ;; Attenuate to create a read-only capability
+;;; (define read-only-cap
+;;;   (<- root-cap 'attenuate #:ops '(read) #:new-label "Read-only access"))
+;;;
+;;; ;; Share over network via OCapN
+;;; (define sturdyref (<- mycapn 'register read-only-cap 'onion))
+;;; (define shareable-uri (ocapn-id->string sturdyref))
+;;;
+;;; ;; Remote agent enlivens the sturdyref to get live capability
+;;; (define remote-cap (<- mycapn 'enliven (string->ocapn-id uri)))
+;;;
+;;; ;; Remote agent can now query (but not write)
+;;; (<- remote-cap 'query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }")

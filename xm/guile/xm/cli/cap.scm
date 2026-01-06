@@ -3,44 +3,62 @@
 ;;; Copyright (C) 2026 Digital Services Team
 ;;; SPDX-License-Identifier: Apache-2.0
 ;;;
-;;; Implements cap create/attenuate/revoke/list/inspect commands per SPEC-029 Section 5.15.
+;;; Implements cap create/attenuate/revoke/list/inspect/export/import commands.
+;;;
+;;; CAPABILITY MODEL (per Spritely Goblins):
+;;;
+;;; In Goblins, capabilities ARE actor references. The CLI bridges this
+;;; model with human usability by:
+;;;
+;;; 1. LABELS - Human-readable names mapped to capability actor refs
+;;; 2. STURDYREFS - Persistent URIs for network sharing
+;;; 3. REGISTRY - Maps labels to (actor-ref, sturdyref) pairs
+;;;
+;;; The registry is stored in Bloblin for persistence across restarts.
+;;; Sturdyrefs can be exported/imported for sharing with remote agents.
 
 (define-module (xm cli cap)
+  #:use-module (goblins)
+  #:use-module (goblins actor-lib methods)
   #:use-module (srfi srfi-19)
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
   #:use-module (xm cli output)
   #:use-module (xm cli parser)
   #:use-module (xm vocabulary)
-  #:use-module (xm store)
+  #:use-module (xm capability)
+  #:use-module (xm gatekeeper)
   #:export (handle-cap-command
             cmd-cap-create
             cmd-cap-attenuate
             cmd-cap-revoke
             cmd-cap-list
-            cmd-cap-inspect))
-
-;;; Re-export vocabulary bindings for use in this module
-(define rdf:type (@ (xm vocabulary) rdf:type))
-(define rdfs:label (@ (xm vocabulary) rdfs:label))
-(define dcterms:created (@ (xm vocabulary) dcterms:created))
+            cmd-cap-inspect
+            cmd-cap-export
+            cmd-cap-import))
 
 ;;; --------------------------------------------------------------------
 ;;; Capability Command Dispatcher
 ;;; --------------------------------------------------------------------
 
-(define (handle-cap-command subcommand opts global-opts store cap-ref)
-  "Dispatch capability subcommands."
+(define (handle-cap-command subcommand opts global-opts vat gatekeeper registry)
+  "Dispatch capability subcommands.
+
+   VAT: the Goblins vat for actor operations
+   GATEKEEPER: the ^graph-gatekeeper actor
+   REGISTRY: the ^capability-registry actor"
   (case subcommand
-    ((create) (cmd-cap-create opts global-opts store cap-ref))
-    ((attenuate) (cmd-cap-attenuate opts global-opts store cap-ref))
-    ((revoke) (cmd-cap-revoke opts global-opts store cap-ref))
-    ((list) (cmd-cap-list opts global-opts store cap-ref))
-    ((inspect) (cmd-cap-inspect opts global-opts store cap-ref))
+    ((create) (cmd-cap-create opts global-opts vat gatekeeper registry))
+    ((attenuate) (cmd-cap-attenuate opts global-opts vat registry))
+    ((revoke) (cmd-cap-revoke opts global-opts vat registry))
+    ((list) (cmd-cap-list opts global-opts vat registry))
+    ((inspect) (cmd-cap-inspect opts global-opts vat registry))
+    ((export) (cmd-cap-export opts global-opts vat registry))
+    ((import) (cmd-cap-import opts global-opts vat registry))
     (else
      (output-error "UNKNOWN_SUBCOMMAND"
                    (format #f "Unknown cap subcommand: ~a" subcommand)
-                   "Available: create, attenuate, revoke, list, inspect"
+                   "Available: create, attenuate, revoke, list, inspect, export, import"
                    global-opts)
      2)))
 
@@ -48,17 +66,23 @@
 ;;; cap create
 ;;; --------------------------------------------------------------------
 
-(define (cmd-cap-create opts global-opts store cap-ref)
+(define (cmd-cap-create opts global-opts vat gatekeeper registry)
   "Create a new root capability.
+
+   Creates a ^graph-facet actor that wraps the gatekeeper with specific
+   access constraints. The facet IS the capability.
+
    Options:
+   -l, --label TEXT: Human-readable label (required)
    -g, --graph URI: Named graph to grant access to (repeatable, required)
    --read: Grant read permission
    --write: Grant write permission
    --admin: Grant admin permission
-   --expires DURATION: Expiration (e.g., 7d, 24h)
-   -l, --label TEXT: Human-readable label"
+   --expires DURATION: Expiration (e.g., 7d, 24h)"
 
-  (let* ((graphs (filter-map
+  (let* ((label (or (assoc-ref opts "label")
+                    (assoc-ref opts "l")))
+         (graphs (filter-map
                   (lambda (opt)
                     (and (member (car opt) '("graph" "g"))
                          (cdr opt)))
@@ -66,11 +90,16 @@
          (read-perm (assoc-ref opts "read"))
          (write-perm (assoc-ref opts "write"))
          (admin-perm (assoc-ref opts "admin"))
-         (expires (assoc-ref opts "expires"))
-         (label (or (assoc-ref opts "label")
-                    (assoc-ref opts "l"))))
+         (expires (assoc-ref opts "expires")))
 
     ;; Validate required options
+    (unless label
+      (output-error "MISSING_LABEL"
+                    "A label is required"
+                    "Use -l or --label to specify a human-readable name"
+                    global-opts)
+      (exit 2))
+
     (when (null? graphs)
       (output-error "MISSING_GRAPH"
                     "At least one graph is required"
@@ -88,69 +117,56 @@
       (when (null? permissions)
         (set! permissions '(read)))
 
-      ;; Create capability
-      (let* ((cap-id (xm-cap-uri (generate-uuid)))
-             (timestamp (current-iso-timestamp))
-             (expires-at (and expires (parse-duration-to-iso expires)))
-             (cap-graph (capabilities-graph-uri)))
+      ;; Create capability within vat context
+      (with-vat vat
+        ;; Create the graph facet (THE CAPABILITY)
+        (let* ((expires-time (and expires (parse-duration expires)))
+               (capability
+                (spawn ^graph-facet gatekeeper graphs permissions
+                       #:expires expires-time
+                       #:label label)))
 
-        ;; Store capability in RDF
-        (store-insert-quad store cap-id rdf:type (xm-uri "Capability") #:graph cap-graph)
-        (store-insert-quad store cap-id dcterms:created timestamp #:graph cap-graph)
+          ;; Register with label in registry
+          ($ registry 'register label capability)
 
-        ;; Store granted graphs
-        (for-each
-         (lambda (g)
-           (store-insert-quad store cap-id (xm-uri "grantsAccess") (expand-uri g) #:graph cap-graph))
-         graphs)
+          (let ((result `((label . ,label)
+                          (graphs . ,graphs)
+                          (permissions . ,permissions)
+                          (expires . ,(and expires-time
+                                           (time->iso8601 expires-time))))))
 
-        ;; Store permissions
-        (for-each
-         (lambda (perm)
-           (store-insert-quad store cap-id (xm-uri "hasPermission") (symbol->string perm) #:graph cap-graph))
-         permissions)
-
-        ;; Store expiration if present
-        (when expires-at
-          (store-insert-quad store cap-id (xm-uri "expiresAt") expires-at #:graph cap-graph))
-
-        ;; Store label if present
-        (when label
-          (store-insert-quad store cap-id rdfs:label label #:graph cap-graph))
-
-        (let ((result `((id . ,cap-id)
-                        (graphs . ,graphs)
-                        (permissions . ,permissions)
-                        (created_at . ,timestamp)
-                        (expires . ,expires-at)
-                        (label . ,label))))
-
-          (if (assoc-ref global-opts "json")
-            (output-result result global-opts)
-            (begin
-              (format #t "\nCapability created: ~a\n" cap-id)
-              (format #t "Graphs: ~a\n" (string-join graphs ", "))
-              (format #t "Permissions: ~a\n" permissions)
-              (when expires-at (format #t "Expires: ~a\n" expires-at))
-              (when label (format #t "Label: ~a\n" label))
-              (format #t "\nExport XM_CAP=~a\n" cap-id))))))))
+            (if (assoc-ref global-opts "json")
+                (output-result result global-opts)
+                (begin
+                  (format #t "\nCapability created: ~a\n" label)
+                  (format #t "Graphs: ~a\n" (string-join graphs ", "))
+                  (format #t "Permissions: ~a\n" permissions)
+                  (when expires-time
+                    (format #t "Expires: ~a\n" (time->iso8601 expires-time)))
+                  (format #t "\nUse 'xm cap export ~a' to get a shareable URI\n" label)))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap attenuate
 ;;; --------------------------------------------------------------------
 
-(define (cmd-cap-attenuate opts global-opts store cap-ref)
+(define (cmd-cap-attenuate opts global-opts vat registry)
   "Create an attenuated (weaker) capability from an existing one.
-   Usage: xm cap attenuate <CAP_ID>
+
+   In Goblins, attenuation spawns a new facet actor with stricter
+   constraints. The new facet IS the attenuated capability.
+
+   Usage: xm cap attenuate <PARENT_LABEL> --label <NEW_LABEL>
    Options:
+   -l, --label TEXT: Label for new capability (required)
    -g, --graph URI: Limit to these graphs (must be subset)
    --read: Include read permission
    --write: Include write permission
-   --expires DURATION: Shorten expiration
-   -l, --label TEXT: Human-readable label"
+   --expires DURATION: Shorten expiration"
 
   (let* ((positional (assoc-ref opts 'positional))
-         (parent-id (and (pair? positional) (car positional)))
+         (parent-label (and (pair? positional) (car positional)))
+         (new-label (or (assoc-ref opts "label")
+                        (assoc-ref opts "l")))
          (graphs (filter-map
                   (lambda (opt)
                     (and (member (car opt) '("graph" "g"))
@@ -158,262 +174,308 @@
                   opts))
          (read-perm (assoc-ref opts "read"))
          (write-perm (assoc-ref opts "write"))
-         (expires (assoc-ref opts "expires"))
-         (label (or (assoc-ref opts "label")
-                    (assoc-ref opts "l"))))
+         (expires (assoc-ref opts "expires")))
 
-    (unless parent-id
-      (output-error "MISSING_CAP_ID"
-                    "Parent capability ID is required"
-                    "Usage: xm cap attenuate <CAP_ID> [options]"
+    (unless parent-label
+      (output-error "MISSING_PARENT"
+                    "Parent capability label is required"
+                    "Usage: xm cap attenuate <PARENT_LABEL> --label <NEW_LABEL>"
                     global-opts)
       (exit 2))
 
-    ;; Build permissions list
+    (unless new-label
+      (output-error "MISSING_LABEL"
+                    "A label for the new capability is required"
+                    "Use -l or --label to specify a human-readable name"
+                    global-opts)
+      (exit 2))
+
+    ;; Build permissions list (if any specified)
     (let ((permissions (filter identity
                                (list (and read-perm 'read)
                                      (and write-perm 'write)))))
 
-      ;; Create attenuated capability
-      (let* ((cap-id (xm-cap-uri (generate-uuid)))
-             (timestamp (current-iso-timestamp))
-             (expires-at (and expires (parse-duration-to-iso expires)))
-             (cap-graph (capabilities-graph-uri)))
+      (with-vat vat
+        ;; Look up parent capability
+        (let ((parent-cap ($ registry 'lookup parent-label)))
+          (unless parent-cap
+            (output-error "CAP_NOT_FOUND"
+                          (format #f "No capability named '~a'" parent-label)
+                          "Use 'xm cap list' to see available capabilities"
+                          global-opts)
+            (exit 1))
 
-        ;; Store capability in RDF
-        (store-insert-quad store cap-id rdf:type (xm-uri "Capability") #:graph cap-graph)
-        (store-insert-quad store cap-id dcterms:created timestamp #:graph cap-graph)
-        (store-insert-quad store cap-id (xm-uri "parent") (expand-uri parent-id) #:graph cap-graph)
+          ;; Attenuate by calling the parent's attenuate method
+          ;; This spawns a new facet with restricted access
+          (let* ((expires-time (and expires (parse-duration expires)))
+                 (attenuated-cap
+                  ($ parent-cap 'attenuate
+                     #:graphs (if (null? graphs) #f graphs)
+                     #:ops (if (null? permissions) #f permissions)
+                     #:new-expires expires-time
+                     #:new-label new-label)))
 
-        ;; Store granted graphs (if specified, otherwise inherit from parent)
-        (unless (null? graphs)
-          (for-each
-           (lambda (g)
-             (store-insert-quad store cap-id (xm-uri "grantsAccess") (expand-uri g) #:graph cap-graph))
-           graphs))
+            ;; Register the new capability
+            ($ registry 'register new-label attenuated-cap)
 
-        ;; Store permissions (if specified)
-        (unless (null? permissions)
-          (for-each
-           (lambda (perm)
-             (store-insert-quad store cap-id (xm-uri "hasPermission") (symbol->string perm) #:graph cap-graph))
-           permissions))
+            ;; Get info from the new capability
+            (let* ((info ($ attenuated-cap 'info))
+                   (result `((label . ,new-label)
+                             (parent . ,parent-label)
+                             (graphs . ,(assoc-ref info 'graphs))
+                             (permissions . ,(assoc-ref info 'operations))
+                             (expires . ,(assoc-ref info 'expires)))))
 
-        ;; Store expiration if present
-        (when expires-at
-          (store-insert-quad store cap-id (xm-uri "expiresAt") expires-at #:graph cap-graph))
-
-        ;; Store label if present
-        (when label
-          (store-insert-quad store cap-id rdfs:label label #:graph cap-graph))
-
-        (let ((result `((id . ,cap-id)
-                        (parent . ,parent-id)
-                        (graphs . ,(if (null? graphs) "inherited" graphs))
-                        (permissions . ,(if (null? permissions) "inherited" permissions))
-                        (created_at . ,timestamp)
-                        (expires . ,expires-at)
-                        (label . ,label))))
-
-          (if (assoc-ref global-opts "json")
-              (output-result result global-opts)
-              (begin
-                (format #t "\nAttenuated capability created: ~a\n" cap-id)
-                (format #t "Parent: ~a\n" parent-id)
-                (unless (null? graphs)
-                  (format #t "Graphs: ~a\n" (string-join graphs ", ")))
-                (unless (null? permissions)
-                  (format #t "Permissions: ~a\n" permissions))
-                (when expires-at (format #t "Expires: ~a\n" expires-at))
-                (when label (format #t "Label: ~a\n" label)))))))))
+              (if (assoc-ref global-opts "json")
+                  (output-result result global-opts)
+                  (begin
+                    (format #t "\nAttenuated capability created: ~a\n" new-label)
+                    (format #t "Parent: ~a\n" parent-label)
+                    (format #t "Graphs: ~a\n"
+                            (string-join (assoc-ref info 'graphs) ", "))
+                    (format #t "Permissions: ~a\n" (assoc-ref info 'operations))
+                    (when (assoc-ref info 'expires)
+                      (format #t "Expires: ~a\n" (assoc-ref info 'expires))))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap revoke
 ;;; --------------------------------------------------------------------
 
-(define (cmd-cap-revoke opts global-opts store cap-ref)
+(define (cmd-cap-revoke opts global-opts vat registry)
   "Revoke a capability.
-   Usage: xm cap revoke <CAP_ID>
-   Options:
-   --cascade: Also revoke all derived capabilities"
+
+   Marks the capability as revoked in the registry. Note that for true
+   revocation, the capability facet should have been created with a
+   revoked-cell that can be set.
+
+   Usage: xm cap revoke <LABEL>"
 
   (let* ((positional (assoc-ref opts 'positional))
-         (cap-id (and (pair? positional) (car positional)))
-         (cascade (assoc-ref opts "cascade")))
+         (label (and (pair? positional) (car positional))))
 
-    (unless cap-id
-      (output-error "MISSING_CAP_ID"
-                    "Capability ID is required"
-                    "Usage: xm cap revoke <CAP_ID>"
+    (unless label
+      (output-error "MISSING_LABEL"
+                    "Capability label is required"
+                    "Usage: xm cap revoke <LABEL>"
                     global-opts)
       (exit 2))
 
-    (let ((cap-graph (capabilities-graph-uri))
-          (full-cap-id (expand-uri cap-id)))
-
-      ;; Set revoked flag in RDF store
-      (store-insert-quad store full-cap-id (xm-uri "revoked") "true" #:graph cap-graph)
-      (store-insert-quad store full-cap-id (xm-uri "revokedAt") (current-iso-timestamp) #:graph cap-graph)
-
-      ;; If cascade, find and revoke derived capabilities
-      (let ((derived-count (if cascade
-                               (revoke-derived-capabilities store cap-graph full-cap-id)
-                               0)))
-
-        (let ((result `((revoked . ,cap-id)
-                        (cascade . ,(if cascade #t #f))
-                        (derived_revoked . ,derived-count))))
-
-          (if (assoc-ref global-opts "json")
-              (output-result result global-opts)
-              (begin
-                (format #t "\nCapability revoked: ~a\n" cap-id)
-                (when cascade
-                  (format #t "Derived capabilities also revoked: ~a\n" derived-count)))))))))
+    (with-vat vat
+      (if ($ registry 'exists? label)
+          (begin
+            ($ registry 'revoke label)
+            (let ((result `((revoked . ,label))))
+              (if (assoc-ref global-opts "json")
+                  (output-result result global-opts)
+                  (format #t "\nCapability revoked: ~a\n" label))))
+          (begin
+            (output-error "CAP_NOT_FOUND"
+                          (format #f "No capability named '~a'" label)
+                          "Use 'xm cap list' to see available capabilities"
+                          global-opts)
+            (exit 1))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap list
 ;;; --------------------------------------------------------------------
 
-(define (cmd-cap-list opts global-opts store cap-ref)
-  "List capabilities.
-   Options:
-   --created-by-me: Only capabilities I created
-   --active-only: Exclude expired/revoked
-   --expired: Show expired capabilities"
+(define (cmd-cap-list opts global-opts vat registry)
+  "List registered capabilities."
 
-  (let* ((created-by-me (assoc-ref opts "created-by-me"))
-         (active-only (assoc-ref opts "active-only"))
-         (show-expired (assoc-ref opts "expired"))
-         (cap-graph (capabilities-graph-uri)))
-
-    ;; Query capabilities from store
-    (let* ((sparql (format #f "SELECT ?cap ?label ?revoked ?expires
-FROM <~a>
-WHERE {
-  ?cap a <~a> .
-  OPTIONAL { ?cap <~a> ?label }
-  OPTIONAL { ?cap <~a> ?revoked }
-  OPTIONAL { ?cap <~a> ?expires }
-  ~a
-}
-ORDER BY DESC(?cap)" cap-graph (xm-uri "Capability")
-                           rdfs:label (xm-uri "revoked") (xm-uri "expiresAt")
-                           (if active-only
-                               (format #f "FILTER(!BOUND(?revoked) || ?revoked != \"true\")")
-                               "")))
-           (json-result (store-query store sparql))
-           (parsed (json-string->scm json-result))
-           (bindings (get-sparql-bindings parsed))
-           (capabilities (map parse-cap-binding bindings)))
+  (with-vat vat
+    (let* ((include-revoked (assoc-ref opts "include-revoked"))
+           (labels ($ registry 'list-all include-revoked))
+           (capabilities
+            (map (lambda (label)
+                   (let ((info ($ registry 'info label)))
+                     `((label . ,label)
+                       (sturdyref . ,(assoc-ref info 'sturdyref))
+                       (revoked . ,(assoc-ref info 'revoked)))))
+                 labels)))
 
       (if (assoc-ref global-opts "json")
           (output-result `((capabilities . ,capabilities)
-                           (count . ,(length capabilities))
-                           (filters . ((created_by_me . ,(if created-by-me #t #f))
-                                       (active_only . ,(if active-only #t #f))
-                                       (show_expired . ,(if show-expired #t #f)))))
+                           (count . ,(length capabilities)))
                          global-opts)
           (begin
-            (format #t "\nCapabilities")
-            (when active-only (format #t " (active only)"))
-            (format #t ":\n\n")
+            (format #t "\nCapabilities:\n\n")
             (if (null? capabilities)
-                (format #t "  (no capabilities found)\n")
+                (format #t "  (no capabilities registered)\n")
                 (for-each
                  (lambda (cap)
-                   (format #t "  ~a  ~a\n"
-                           (assoc-ref cap 'id)
-                           (or (assoc-ref cap 'label) "")))
+                   (format #t "  ~a~a\n"
+                           (assoc-ref cap 'label)
+                           (if (assoc-ref cap 'revoked) " [REVOKED]" "")))
                  capabilities)))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap inspect
 ;;; --------------------------------------------------------------------
 
-(define (cmd-cap-inspect opts global-opts store cap-ref)
+(define (cmd-cap-inspect opts global-opts vat registry)
   "Inspect a capability's full details.
-   Usage: xm cap inspect <CAP_ID>"
+
+   Usage: xm cap inspect <LABEL>"
 
   (let* ((positional (assoc-ref opts 'positional))
-         (cap-id (and (pair? positional) (car positional))))
+         (label (and (pair? positional) (car positional))))
 
-    (unless cap-id
-      (output-error "MISSING_CAP_ID"
-                    "Capability ID is required"
-                    "Usage: xm cap inspect <CAP_ID>"
+    (unless label
+      (output-error "MISSING_LABEL"
+                    "Capability label is required"
+                    "Usage: xm cap inspect <LABEL>"
                     global-opts)
       (exit 2))
 
-    (let* ((cap-graph (capabilities-graph-uri))
-           (full-cap-id (expand-uri cap-id))
-           ;; Query capability details
-           (details (query-cap-details store cap-graph full-cap-id))
-           ;; Query granted graphs
-           (graphs (query-cap-graphs store cap-graph full-cap-id))
-           ;; Query permissions
-           (permissions (query-cap-permissions store cap-graph full-cap-id)))
+    (with-vat vat
+      (let ((cap ($ registry 'lookup label)))
+        (if (not cap)
+            (begin
+              (output-error "CAP_NOT_FOUND"
+                            (format #f "No capability named '~a'" label)
+                            "Use 'xm cap list' to see available capabilities"
+                            global-opts)
+              (exit 1))
+            (let* ((info ($ cap 'info))
+                   (sref ($ registry 'get-sturdyref label))
+                   (result `((label . ,label)
+                             (graphs . ,(assoc-ref info 'graphs))
+                             (permissions . ,(assoc-ref info 'operations))
+                             (expires . ,(assoc-ref info 'expires))
+                             (sturdyref . ,sref))))
 
-      (if (null? details)
-          (begin
-            (output-error "CAP_NOT_FOUND"
-                          (format #f "Capability not found: ~a" cap-id)
-                          "Use 'xm cap list' to see available capabilities"
-                          global-opts)
-            (exit 1))
-          (let ((result `((id . ,(compact-uri full-cap-id))
-                          (graphs . ,(map compact-uri graphs))
-                          (permissions . ,permissions)
-                          (created_at . ,(assoc-ref details 'created))
-                          (parent . ,(assoc-ref details 'parent))
-                          (expires . ,(assoc-ref details 'expires))
-                          (revoked . ,(assoc-ref details 'revoked))
-                          (label . ,(assoc-ref details 'label)))))
+              (if (assoc-ref global-opts "json")
+                  (output-result result global-opts)
+                  (begin
+                    (format #t "\nCapability: ~a\n\n" label)
+                    (format #t "Graphs:\n")
+                    (for-each (lambda (g) (format #t "  - ~a\n" g))
+                              (assoc-ref info 'graphs))
+                    (format #t "\nPermissions: ~a\n" (assoc-ref info 'operations))
+                    (if (assoc-ref info 'expires)
+                        (format #t "Expires: ~a\n" (assoc-ref info 'expires))
+                        (format #t "Expires: never\n"))
+                    (format #t "\nSturdyref: ~a\n"
+                            (or sref "(not exported)")))))))))
 
-            (if (assoc-ref global-opts "json")
-                (output-result result global-opts)
-                (begin
-                  (format #t "\nCapability: ~a\n\n" (compact-uri full-cap-id))
-                  (format #t "Graphs:\n")
-                  (for-each (lambda (g) (format #t "  - ~a\n" g))
-                            (map compact-uri graphs))
-                  (format #t "\nPermissions: ~a\n" permissions)
-                  (format #t "Created: ~a\n" (or (assoc-ref details 'created) "unknown"))
-                  (when (assoc-ref details 'parent)
-                    (format #t "Parent: ~a\n" (compact-uri (assoc-ref details 'parent))))
-                  (if (assoc-ref details 'expires)
-                      (format #t "Expires: ~a\n" (assoc-ref details 'expires))
-                      (format #t "Expires: never\n"))
-                  (format #t "Status: ~a\n"
-                          (if (assoc-ref details 'revoked) "revoked" "active"))
-                  (when (assoc-ref details 'label)
-                    (format #t "Label: ~a\n" (assoc-ref details 'label))))))))))
+;;; --------------------------------------------------------------------
+;;; cap export
+;;; --------------------------------------------------------------------
+
+(define (cmd-cap-export opts global-opts vat registry mycapn)
+  "Export a capability as a shareable sturdyref URI.
+
+   Registers the capability with OCapN to get a network-accessible
+   sturdyref that can be shared with remote agents.
+
+   Usage: xm cap export <LABEL> [--netlayer NAME]
+   Options:
+   --netlayer NAME: Netlayer to use (onion, tcp-tls, etc.)"
+
+  (let* ((positional (assoc-ref opts 'positional))
+         (label (and (pair? positional) (car positional)))
+         (netlayer (or (assoc-ref opts "netlayer") 'onion)))
+
+    (unless label
+      (output-error "MISSING_LABEL"
+                    "Capability label is required"
+                    "Usage: xm cap export <LABEL>"
+                    global-opts)
+      (exit 2))
+
+    (with-vat vat
+      (let ((cap ($ registry 'lookup label)))
+        (if (not cap)
+            (begin
+              (output-error "CAP_NOT_FOUND"
+                            (format #f "No capability named '~a'" label)
+                            "Use 'xm cap list' to see available capabilities"
+                            global-opts)
+              (exit 1))
+            ;; Register with OCapN to get sturdyref
+            (on (<- mycapn 'register cap netlayer)
+                (lambda (sref)
+                  (let* ((uri (ocapn-id->string sref))
+                         (result `((label . ,label)
+                                   (sturdyref . ,uri)
+                                   (netlayer . ,netlayer))))
+                    ;; Store sturdyref in registry
+                    ($ registry 'set-sturdyref label uri)
+
+                    (if (assoc-ref global-opts "json")
+                        (output-result result global-opts)
+                        (begin
+                          (format #t "\nCapability exported: ~a\n\n" label)
+                          (format #t "Sturdyref URI:\n~a\n\n" uri)
+                          (format #t "Share this URI with remote agents.\n")
+                          (format #t "They can import it with:\n")
+                          (format #t "  xm cap import '~a' --label <name>\n" uri)))))))))))
+
+;;; --------------------------------------------------------------------
+;;; cap import
+;;; --------------------------------------------------------------------
+
+(define (cmd-cap-import opts global-opts vat registry mycapn)
+  "Import a capability from a sturdyref URI.
+
+   Enlivens the sturdyref to get a live capability reference, then
+   registers it with a local label.
+
+   Usage: xm cap import <URI> --label <LABEL>"
+
+  (let* ((positional (assoc-ref opts 'positional))
+         (uri (and (pair? positional) (car positional)))
+         (label (or (assoc-ref opts "label")
+                    (assoc-ref opts "l"))))
+
+    (unless uri
+      (output-error "MISSING_URI"
+                    "Sturdyref URI is required"
+                    "Usage: xm cap import <URI> --label <LABEL>"
+                    global-opts)
+      (exit 2))
+
+    (unless label
+      (output-error "MISSING_LABEL"
+                    "A label is required"
+                    "Use -l or --label to specify a local name for this capability"
+                    global-opts)
+      (exit 2))
+
+    (with-vat vat
+      ;; Enliven the sturdyref to get live reference
+      (on (<- mycapn 'enliven (string->ocapn-id uri))
+          (lambda (remote-cap)
+            ;; Register with label
+            ($ registry 'register label remote-cap uri)
+
+            ;; Get info from the remote capability
+            (on (<- remote-cap 'info)
+                (lambda (info)
+                  (let ((result `((label . ,label)
+                                  (sturdyref . ,uri)
+                                  (graphs . ,(assoc-ref info 'graphs))
+                                  (permissions . ,(assoc-ref info 'operations)))))
+
+                    (if (assoc-ref global-opts "json")
+                        (output-result result global-opts)
+                        (begin
+                          (format #t "\nCapability imported: ~a\n" label)
+                          (format #t "Graphs: ~a\n"
+                                  (string-join (assoc-ref info 'graphs) ", "))
+                          (format #t "Permissions: ~a\n"
+                                  (assoc-ref info 'operations))))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions
 ;;; --------------------------------------------------------------------
 
-(define (current-iso-timestamp)
-  "Get current time as ISO 8601 string."
-  (date->string (time-utc->date (current-time time-utc))
-                "~Y-~m-~dT~H:~M:~SZ"))
+(define (time->iso8601 time)
+  "Convert SRFI-19 time to ISO 8601 string."
+  (date->string (time-utc->date time) "~Y-~m-~dT~H:~M:~SZ"))
 
-(define (generate-uuid)
-  "Generate a simple UUID-like string."
-  (let* ((t (current-time time-utc))
-         (secs (time-second t))
-         (nsecs (time-nanosecond t))
-         (r1 (random (expt 2 32)))
-         (r2 (random (expt 2 32))))
-    (format #f "~8,'0x-~4,'0x-~4,'0x-~4,'0x-~12,'0x"
-            (logand secs #xffffffff)
-            (logand (ash nsecs -16) #xffff)
-            (logior #x4000 (logand (ash nsecs 0) #x0fff))
-            (logior #x8000 (logand r1 #x3fff))
-            (logand r2 #xffffffffffff))))
-
-(define (parse-duration-to-iso duration-str)
-  "Parse a duration string (7d, 24h, 30m) and return ISO timestamp for expiration."
+(define (parse-duration duration-str)
+  "Parse a duration string (7d, 24h, 30m) to SRFI-19 time."
   (let* ((len (string-length duration-str))
          (unit (string-ref duration-str (- len 1)))
          (value (string->number (substring duration-str 0 (- len 1))))
@@ -424,10 +486,7 @@ ORDER BY DESC(?cap)" cap-graph (xm-uri "Capability")
                     ((#\m) (* value 60))      ; minutes
                     ((#\s) value)             ; seconds
                     (else (* value 86400))))) ; default to days
-    (date->string
-     (time-utc->date
-      (add-duration now (make-time time-duration 0 seconds)))
-     "~Y-~m-~dT~H:~M:~SZ")))
+    (add-duration now (make-time time-duration 0 seconds))))
 
 (define (filter-map proc lst)
   "Map PROC over LST, keeping only non-#f results."
@@ -459,131 +518,5 @@ ORDER BY DESC(?cap)" cap-graph (xm-uri "Capability")
 
 (define (identity x) x)
 
-;;; --------------------------------------------------------------------
-;;; Capability Graph URI
-;;; --------------------------------------------------------------------
-
-(define (capabilities-graph-uri)
-  "Get the capabilities graph URI."
-  (xm-graph-uri "capabilities"))
-
-;;; --------------------------------------------------------------------
-;;; SPARQL Result Parsing Helpers
-;;; --------------------------------------------------------------------
-
-(define (get-sparql-bindings parsed)
-  "Extract bindings list from parsed SPARQL JSON result."
-  (let ((results (assoc-ref parsed "results")))
-    (if results
-        (or (assoc-ref results "bindings") '())
-        '())))
-
-(define (get-binding-value binding var-name)
-  "Get the value of a variable from a SPARQL binding."
-  (let ((var-data (assoc-ref binding var-name)))
-    (if var-data
-        (assoc-ref var-data "value")
-        #f)))
-
-(define (parse-cap-binding binding)
-  "Parse a capability from a SPARQL binding."
-  (let ((cap-val (get-binding-value binding "cap"))
-        (label-val (get-binding-value binding "label"))
-        (revoked-val (get-binding-value binding "revoked"))
-        (expires-val (get-binding-value binding "expires")))
-    `((id . ,(if cap-val (compact-uri cap-val) "unknown"))
-      (label . ,label-val)
-      (revoked . ,(and revoked-val (string=? revoked-val "true")))
-      (expires . ,expires-val))))
-
-;;; --------------------------------------------------------------------
-;;; Capability Query Helpers
-;;; --------------------------------------------------------------------
-
-(define (query-cap-details store cap-graph cap-id)
-  "Query detailed information about a capability."
-  (let* ((sparql (format #f "SELECT ?created ?parent ?expires ?revoked ?label
-FROM <~a>
-WHERE {
-  <~a> a <~a> .
-  OPTIONAL { <~a> <~a> ?created }
-  OPTIONAL { <~a> <~a> ?parent }
-  OPTIONAL { <~a> <~a> ?expires }
-  OPTIONAL { <~a> <~a> ?revoked }
-  OPTIONAL { <~a> <~a> ?label }
-}" cap-graph cap-id (xm-uri "Capability")
-   cap-id dcterms:created
-   cap-id (xm-uri "parent")
-   cap-id (xm-uri "expiresAt")
-   cap-id (xm-uri "revoked")
-   cap-id rdfs:label))
-         (json-result (store-query store sparql))
-         (parsed (json-string->scm json-result))
-         (bindings (get-sparql-bindings parsed)))
-    (if (null? bindings)
-        '()
-        (let ((b (car bindings)))
-          `((created . ,(get-binding-value b "created"))
-            (parent . ,(get-binding-value b "parent"))
-            (expires . ,(get-binding-value b "expires"))
-            (revoked . ,(let ((r (get-binding-value b "revoked")))
-                          (and r (string=? r "true"))))
-            (label . ,(get-binding-value b "label")))))))
-
-(define (query-cap-graphs store cap-graph cap-id)
-  "Query graphs granted by a capability."
-  (let* ((sparql (format #f "SELECT ?graph
-FROM <~a>
-WHERE {
-  <~a> <~a> ?graph
-}" cap-graph cap-id (xm-uri "grantsAccess")))
-         (json-result (store-query store sparql))
-         (parsed (json-string->scm json-result))
-         (bindings (get-sparql-bindings parsed)))
-    (map (lambda (b) (get-binding-value b "graph")) bindings)))
-
-(define (query-cap-permissions store cap-graph cap-id)
-  "Query permissions granted by a capability."
-  (let* ((sparql (format #f "SELECT ?perm
-FROM <~a>
-WHERE {
-  <~a> <~a> ?perm
-}" cap-graph cap-id (xm-uri "hasPermission")))
-         (json-result (store-query store sparql))
-         (parsed (json-string->scm json-result))
-         (bindings (get-sparql-bindings parsed)))
-    (map (lambda (b)
-           (let ((p (get-binding-value b "perm")))
-             (if p (string->symbol p) 'unknown)))
-         bindings)))
-
-;;; --------------------------------------------------------------------
-;;; Cascade Revoke Helper
-;;; --------------------------------------------------------------------
-
-(define (revoke-derived-capabilities store cap-graph parent-cap-id)
-  "Revoke all capabilities derived from a parent capability.
-   Returns the count of revoked derived capabilities."
-  ;; Find all capabilities with this parent
-  (let* ((sparql (format #f "SELECT ?cap
-FROM <~a>
-WHERE {
-  ?cap <~a> <~a> .
-  FILTER NOT EXISTS { ?cap <~a> \"true\" }
-}" cap-graph (xm-uri "parent") parent-cap-id (xm-uri "revoked")))
-         (json-result (store-query store sparql))
-         (parsed (json-string->scm json-result))
-         (bindings (get-sparql-bindings parsed))
-         (timestamp (current-iso-timestamp)))
-    ;; Revoke each derived capability
-    (let loop ((bindings bindings) (count 0))
-      (if (null? bindings)
-          count
-          (let ((cap-id (get-binding-value (car bindings) "cap")))
-            (when cap-id
-              ;; Mark as revoked
-              (store-insert-quad store cap-id (xm-uri "revoked") "true" #:graph cap-graph)
-              (store-insert-quad store cap-id (xm-uri "revokedAt") timestamp #:graph cap-graph)
-              ;; Recursively revoke children
-              (revoke-derived-capabilities store cap-graph cap-id))
-            (loop (cdr bindings) (+ count 1)))))))
+;;; Import OCapN utilities
+(use-modules (goblins ocapn ids))

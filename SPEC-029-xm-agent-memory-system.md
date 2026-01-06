@@ -4,7 +4,7 @@
 |---|---|
 | Document ID | SPEC-029 |
 | Title | Cross Memory (xm): Linked Memory for LLM Agents |
-| Version | 0.12.0 |
+| Version | 0.13.0 |
 | Status | Draft |
 | Created | 2026-01-06 |
 | Last Updated | 2026-01-06 |
@@ -529,71 +529,141 @@ xm query backlinks --node "xm:entity/fastapi" --predicate "xm:uses"
 
 ### 4.5 Capability Model
 
-#### 4.5.1 Capability Structure
+#### 4.5.1 Capabilities ARE Actor References (Goblins Model)
 
-Capabilities grant access to **named graphs**, not individual nodes. This integrates with Oxigraph's quad model.
+In Spritely Goblins, **capabilities ARE actor references**. This is fundamentally different from traditional permission systems:
+
+| Traditional Model | Goblins Model |
+|-------------------|---------------|
+| Capability = data record with permissions | Capability = unforgeable actor reference |
+| Check permissions against database | Having the reference IS the permission |
+| ACLs or permission lists | Object-capability discipline |
+| Separate tokens from objects | Reference and capability are one |
+
+**Key insight**: If you have a reference to an actor, you can call its methods. There's no separate "permission token" to check—the reference itself grants the capability.
+
+#### 4.5.2 Graph Facets (Capability Implementation)
+
+Capabilities are implemented as **facet actors** that wrap the gatekeeper with access restrictions:
 
 ```scheme
-;; Capability structure (stored in Bloblin)
-(define-record-type <xm-capability>
-  (make-xm-capability id graphs permissions expires created-by)
-  xm-capability?
-  (id cap-id)                    ; Sturdyref token (xm:cap/{token})
-  (graphs cap-graphs)            ; List of allowed named graphs
-  (permissions cap-permissions)  ; '(read) | '(read write) | '(read write admin)
-  (expires cap-expires)          ; #f or ISO 8601 timestamp
-  (created-by cap-created-by))   ; Parent capability (for attenuation audit)
+;;; ^graph-facet - The capability actor
+;;; Whoever has a reference to this actor can perform the allowed operations
+
+(define* (^graph-facet bcom gatekeeper allowed-graphs allowed-ops
+                       #:key expires revoked-cell label)
+  "A facet IS the capability. The actor reference grants access."
+
+  (methods
+   ;; Query (if 'read in allowed-ops)
+   [(query sparql)
+    (validate 'read)
+    (<- gatekeeper 'query-with-graphs sparql allowed-graphs)]
+
+   ;; Insert (if 'write in allowed-ops)
+   [(insert graph-uri triples)
+    (validate 'write graph-uri)
+    (<- gatekeeper 'insert-internal graph-uri triples)]
+
+   ;; Attenuate: spawn a NEW facet with stricter constraints
+   ;; This is how capabilities are weakened in Goblins
+   [(attenuate #:key graphs ops new-expires new-label)
+    (validate-attenuation graphs ops new-expires)
+    (spawn ^graph-facet gatekeeper
+           (or graphs allowed-graphs)
+           (or ops allowed-ops)
+           #:expires (or new-expires expires)
+           #:label new-label)]))
 ```
+
+**Attenuation = Spawn New Actor**: To create a weaker capability, spawn a new facet with stricter constraints. The new actor reference IS the attenuated capability.
 
 | Permission | Allows | SPARQL Operations |
 |------------|--------|-------------------|
 | `read` | Query allowed graphs | SELECT, ASK, CONSTRUCT, DESCRIBE |
 | `write` | Insert/update in allowed graphs | INSERT DATA, DELETE DATA |
-| `admin` | Delete graphs, modify capabilities | DROP GRAPH, capability attenuation |
+| `admin` | Delete graphs, create graphs | DROP GRAPH, CREATE GRAPH |
 
-#### 4.5.2 Capability Attenuation
-
-Capabilities can only be **attenuated** (weakened), never strengthened. A child capability must be a subset of its parent:
+#### 4.5.3 Capability Creation and Attenuation
 
 ```scheme
-;; Valid attenuation: fewer graphs, fewer permissions, shorter expiry
-(attenuate parent-cap
-  #:graphs '("xm:graph/public")  ; subset of parent's graphs
-  #:permissions '(read)             ; subset of parent's permissions
-  #:expires "2026-02-01")           ; earlier than parent's expiry
+;; 1. Create root capability (full admin access)
+(define root-cap
+  (spawn ^graph-facet gatekeeper
+         '("xm:graph/project/acme-api" "xm:graph/public")
+         '(read write admin)
+         #:label "Root admin access"))
 
-;; Invalid: would grant access parent doesn't have
-(attenuate parent-cap
-  #:graphs '("xm:graph/secret"))  ; ERROR: not in parent's graphs
+;; 2. Attenuate to create weaker capability
+;; This spawns a NEW actor - the new reference IS the capability
+(define read-only-cap
+  (<- root-cap 'attenuate
+      #:ops '(read)
+      #:new-label "Read-only access"))
+
+;; 3. Use the capability (whoever has this reference can query)
+(<- read-only-cap 'query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }")
 ```
 
-#### 4.5.3 Capability Sharing Protocol
+Attenuation rules (enforced by the facet):
+- **Graphs**: Child must be subset of parent's graphs
+- **Operations**: Child must be subset of parent's operations
+- **Expiry**: Child must expire at or before parent
+
+#### 4.5.4 Network Sharing via Sturdyrefs
+
+To share capabilities over the network, register the facet with OCapN:
+
+```scheme
+;; Server: register capability to get sturdyref
+(define sturdyref (<- mycapn 'register read-only-cap 'onion))
+(define shareable-uri (ocapn-id->string sturdyref))
+;; => "ocapn:tor:abc123...#swiss-num"
+
+;; Client: enliven sturdyref to get live capability reference
+(define remote-cap
+  (<- mycapn 'enliven (string->ocapn-id shareable-uri)))
+
+;; Now use it (CapTP handles network transparently)
+(<- remote-cap 'query "SELECT ?s WHERE {?s a xm:Entity}")
+```
+
+**CLI equivalent**:
 
 ```bash
-# Create a capability granting access to specific graphs
-xm cap create --graphs "xm:graph/public,xm:graph/project/acme-api" \
-                --permissions read,write \
-                --expires "2026-02-01"
+# Create a capability with a human-readable label
+xm cap create --label "acme-readonly" \
+  --graph xm:graph/project/acme-api \
+  --graph xm:graph/public \
+  --read
 
-# Output: capability sturdyref (shareable token)
-{
-  "cap_ref": "xm:cap/abc123...",
-  "graphs": ["xm:graph/public", "xm:graph/project/acme-api"],
-  "permissions": ["read", "write"],
-  "expires": "2026-02-01T00:00:00Z"
-}
+# Attenuate an existing capability
+xm cap attenuate acme-readonly --label "public-only" \
+  --graph xm:graph/public
 
-# Attenuate to create a read-only capability for sharing
-xm cap attenuate --cap "xm:cap/abc123..." \
-                   --graphs "xm:graph/public" \
-                   --permissions read
+# Export as sturdyref for network sharing
+xm cap export acme-readonly --netlayer onion
+# Output: ocapn:tor:abc123...#swiss-num
 
-# Another agent uses the capability (queries auto-scoped)
-xm query sparql --cap "xm:cap/abc123..." \
-  "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10"
+# Import a remote capability
+xm cap import "ocapn:tor:abc123...#swiss-num" --label "remote-acme"
+
+# Use capability (reference looked up by label)
+xm query sparql --cap acme-readonly "SELECT ?s ?p ?o WHERE { ?s ?p ?o }"
 ```
 
-#### 4.5.4 Public Graph (No Capability Required)
+#### 4.5.5 CLI Capability Registry
+
+Since Goblins capabilities are actor references (not strings), the CLI uses a **registry** to map human-readable labels to references:
+
+| Storage | Contents |
+|---------|----------|
+| Registry (in-memory) | Label → actor reference mapping |
+| Bloblin (persistent) | Label → sturdyref URI for persistence |
+
+This enables CLI usability while maintaining Goblins' pure capability model.
+
+#### 4.5.6 Public Graph (No Capability Required)
 
 The `xm:graph/public` graph is readable without a capability:
 
@@ -3250,109 +3320,177 @@ Error format:
 
 ### 7.2 Graph Gatekeeper Actor
 
-The **Graph Gatekeeper** is the security boundary—all Oxigraph access passes through it.
+The **Graph Gatekeeper** provides direct access to Oxigraph storage. It is NOT the capability—capabilities are **facet actors** that wrap the gatekeeper (see Section 4.5).
 
 ```scheme
-;;; xm/gatekeeper.scm - Security layer for graph access
+;;; xm/gatekeeper.scm - Storage layer for graph access
+;;;
+;;; IMPORTANT: The gatekeeper is NOT the capability.
+;;; Capabilities are ^graph-facet actors that wrap this gatekeeper.
+;;; See xm/capability.scm for the facet implementation.
 
 (use-modules (goblins)
-             (goblins actor-lib cell)
-             (xm-oxigraph-ffi)
-             (xm capabilities))
+             (goblins actor-lib methods)
+             (xm store))
 
-;;; Graph Gatekeeper Actor - ALL storage access goes through here
-(define (^graph-gatekeeper bcom oxigraph-store cap-store)
-
-  ;; Validate capability and return allowed graphs
-  (define (validate-capability cap-ref required-permission)
-    (let ((cap (bloblin-get cap-store cap-ref)))
-      (unless cap
-        (error 'invalid-capability "Unknown capability reference" cap-ref))
-      ;; Check expiration
-      (when (and (cap-expires cap)
-                 (time>? (current-time) (cap-expires cap)))
-        (error 'expired-capability "Capability has expired" cap-ref))
-      ;; Check permission
-      (unless (memq required-permission (cap-permissions cap))
-        (error 'permission-denied
-               (format #f "Capability lacks ~a permission" required-permission)))
-      ;; Return allowed graphs
-      (cap-graphs cap)))
-
-  ;; Rewrite SPARQL query to scope to allowed graphs
-  (define (scope-query sparql-string allowed-graphs)
-    (let ((from-clauses
-           (string-join
-            (map (lambda (g) (format #f "FROM <~a>" g)) allowed-graphs)
-            "\n")))
-      ;; Insert FROM clauses after SELECT/CONSTRUCT/etc.
-      (sparql-add-from-clauses sparql-string from-clauses)))
+;;; Graph Gatekeeper Actor - provides storage operations
+;;; Capability facets call internal methods after validating access
+(define (^graph-gatekeeper bcom store)
 
   (methods
-   ;; Query with capability (or public-only if no cap)
-   [(query cap-ref sparql-string)
-    (let* ((allowed-graphs
-            (if cap-ref
-                (validate-capability cap-ref 'read)
-                '("xm:graph/public")))  ; public only if no cap
-           (scoped-sparql (scope-query sparql-string allowed-graphs)))
-      ;; Execute against Oxigraph
-      (oxigraph-query oxigraph-store scoped-sparql))]
+   ;;; PUBLIC METHODS - No capability required
 
-   ;; Insert data (requires write permission)
-   [(insert cap-ref graph-uri triples-turtle)
-    (let ((allowed-graphs (validate-capability cap-ref 'write)))
-      ;; Verify target graph is allowed
-      (unless (member graph-uri allowed-graphs)
-        (error 'permission-denied
-               "Capability does not grant write access to graph" graph-uri))
-      ;; Execute SPARQL UPDATE
-      (oxigraph-update! oxigraph-store
-        (format #f "INSERT DATA { GRAPH <~a> { ~a } }"
-                graph-uri triples-turtle)))]
+   ;; Query public graph only
+   [(public-query sparql)
+    (store-query-with-graphs store sparql '("xm:graph/public"))]
 
-   ;; Delete data (requires admin permission)
-   [(delete cap-ref graph-uri pattern)
-    (let ((allowed-graphs (validate-capability cap-ref 'admin)))
-      (unless (member graph-uri allowed-graphs)
-        (error 'permission-denied
-               "Capability does not grant admin access to graph" graph-uri))
-      (oxigraph-update! oxigraph-store
-        (format #f "DELETE WHERE { GRAPH <~a> { ~a } }"
-                graph-uri pattern)))]
+   ;; Store statistics
+   [(stats)
+    `((quad-count . ,(store-count store)))]
 
-   ;; Attenuate capability (can only weaken, never strengthen)
-   [(attenuate cap-ref new-graphs new-permissions new-expires)
-    (let* ((parent-cap (bloblin-get cap-store cap-ref))
-           (parent-graphs (cap-graphs parent-cap))
-           (parent-perms (cap-permissions parent-cap)))
-      ;; Verify attenuation (subset only)
-      (unless (lset<= string=? new-graphs parent-graphs)
-        (error 'invalid-attenuation
-               "Cannot grant graphs not in parent capability"))
-      (unless (lset<= eq? new-permissions parent-perms)
-        (error 'invalid-attenuation
-               "Cannot grant permissions not in parent capability"))
-      ;; Create child capability
-      (let ((child-cap (make-xm-capability
-                        (generate-sturdyref)
-                        new-graphs
-                        new-permissions
-                        new-expires
-                        cap-ref)))  ; link to parent for audit
-        (bloblin-put! cap-store (cap-id child-cap) child-cap)
-        (cap-id child-cap)))]))
+   ;;; INTERNAL METHODS - Called by capability facets only
+   ;;; These TRUST the caller to have validated access rights
+
+   ;; Query with specific graphs (facet passes its allowed graphs)
+   [(query-with-graphs sparql allowed-graphs)
+    (let ((scoped-query (rewrite-query-with-graphs sparql allowed-graphs)))
+      (store-query store scoped-query))]
+
+   ;; Insert triples (facet has validated write access)
+   [(insert-internal graph-uri triples-turtle)
+    (store-load-graph store triples-turtle
+                      #:graph graph-uri #:format "turtle")]
+
+   ;; Delete triples (facet has validated admin access)
+   [(delete-internal graph-uri pattern)
+    (store-update store
+      (format #f "DELETE WHERE { GRAPH <~a> { ~a } }"
+              graph-uri pattern))]
+
+   ;; Clear graph (facet has validated admin access)
+   [(clear-graph-internal graph-uri)
+    (store-update store (format #f "CLEAR GRAPH <~a>" graph-uri))]))
 ```
 
-### 7.3 Vat Organization
+### 7.3 Graph Facet Actor (The Capability)
+
+The **Graph Facet** IS the capability. Whoever has a reference to this actor can perform the allowed operations.
+
+```scheme
+;;; xm/capability.scm - Capability facets
+;;;
+;;; KEY INSIGHT: In Goblins, capabilities ARE actor references.
+;;; A facet wraps the gatekeeper with access restrictions.
+;;; The facet reference IS the capability.
+
+(use-modules (goblins)
+             (goblins actor-lib methods))
+
+(define* (^graph-facet bcom gatekeeper allowed-graphs allowed-ops
+                       #:key expires revoked-cell label)
+  "A graph facet IS the capability. The actor reference grants access."
+
+  ;; Validation helpers
+  (define (check-op op)
+    (unless (memq op allowed-ops)
+      (error 'operation-not-permitted op)))
+
+  (define (check-graph graph-uri)
+    (unless (member graph-uri allowed-graphs)
+      (error 'graph-not-permitted graph-uri)))
+
+  (define (check-expired)
+    (when (and expires (time<? expires (current-time time-utc)))
+      (error 'capability-expired)))
+
+  (methods
+   ;; Query (requires 'read in allowed-ops)
+   [(query sparql)
+    (check-expired)
+    (check-op 'read)
+    (<- gatekeeper 'query-with-graphs sparql allowed-graphs)]
+
+   ;; Insert (requires 'write in allowed-ops)
+   [(insert graph-uri triples)
+    (check-expired)
+    (check-op 'write)
+    (check-graph graph-uri)
+    (<- gatekeeper 'insert-internal graph-uri triples)]
+
+   ;; Delete (requires 'admin in allowed-ops)
+   [(delete graph-uri pattern)
+    (check-expired)
+    (check-op 'admin)
+    (check-graph graph-uri)
+    (<- gatekeeper 'delete-internal graph-uri pattern)]
+
+   ;; Introspection
+   [(info)
+    `((graphs . ,allowed-graphs)
+      (operations . ,allowed-ops)
+      (expires . ,expires)
+      (label . ,label))]
+
+   ;; Attenuation: spawn a NEW facet with stricter constraints
+   ;; The new actor reference IS the attenuated capability
+   [(attenuate #:key graphs ops new-expires new-label)
+    (check-expired)
+    ;; Validate attenuation (can only restrict, not expand)
+    (let ((child-graphs (or graphs allowed-graphs))
+          (child-ops (or ops allowed-ops)))
+      (unless (lset<= string=? child-graphs allowed-graphs)
+        (error 'invalid-attenuation "Cannot grant graphs not in parent"))
+      (unless (lset<= eq? child-ops allowed-ops)
+        (error 'invalid-attenuation "Cannot grant ops not in parent"))
+      ;; Spawn attenuated facet - THIS IS THE KEY TO GOBLINS CAPABILITIES
+      (spawn ^graph-facet gatekeeper child-graphs child-ops
+             #:expires (or new-expires expires)
+             #:label new-label))]))
+```
+
+### 7.4 Complete Capability Flow
+
+```scheme
+;;; Example: Creating and using capabilities the Goblins way
+
+;; 1. Create gatekeeper (once, at startup)
+(define gatekeeper (spawn ^graph-gatekeeper store))
+
+;; 2. Create root capability (full access)
+(define root-cap
+  (spawn ^graph-facet gatekeeper
+         '("xm:graph/project/acme-api" "xm:graph/public")
+         '(read write admin)
+         #:label "Root admin"))
+
+;; 3. Attenuate to create read-only capability
+;; This spawns a NEW actor - the reference IS the capability
+(define read-only-cap
+  (<- root-cap 'attenuate #:ops '(read) #:new-label "Read only"))
+
+;; 4. Share over network via OCapN
+(define sturdyref (<- mycapn 'register read-only-cap 'onion))
+(define shareable-uri (ocapn-id->string sturdyref))
+;; => "ocapn:tor:abc123...#swiss-num"
+
+;; 5. Remote agent enlivens sturdyref
+(define remote-cap (<- mycapn 'enliven (string->ocapn-id uri)))
+
+;; 6. Remote agent uses capability
+;; The facet validates access before calling gatekeeper
+(<- remote-cap 'query "SELECT ?s ?p ?o WHERE { ?s ?p ?o }")
+```
+
+### 7.5 Vat Organization
 
 ```scheme
 ;;; xm/vats.scm - Vat setup and initialization
 
 (use-modules (goblins)
              (goblins vat)
-             (xm-oxigraph-ffi)
-             (xm-gatekeeper))
+             (xm store)
+             (xm gatekeeper)
+             (xm capability))
 
 ;;; Main Vat: coordinates all actors
 (define (spawn-xm-vat config)
@@ -3360,25 +3498,24 @@ The **Graph Gatekeeper** is the security boundary—all Oxigraph access passes t
 
   (with-vat vat
     ;; Initialize Oxigraph store
-    (define oxigraph-store
-      (make-oxigraph-store (config-oxigraph-path config)))
+    (define store (make-store (config-oxigraph-path config)))
 
-    ;; Initialize Bloblin stores
-    (define cap-store
-      (make-bloblin-store (config-capabilities-path config)))
-    (define session-store
-      (make-bloblin-store (config-sessions-path config)))
-    (define audit-store
-      (make-bloblin-store (config-audit-path config)))
+    ;; Spawn gatekeeper (storage access)
+    (define gatekeeper (spawn ^graph-gatekeeper store))
 
-    ;; Spawn actors
-    (define gatekeeper
-      (spawn ^graph-gatekeeper oxigraph-store cap-store))
-    (define session-actor
-      (spawn ^session-actor gatekeeper session-store))
+    ;; Create root capability with full access
+    (define root-cap
+      (spawn ^graph-facet gatekeeper
+             '("xm:graph/public" "xm:graph/project/*")
+             '(read write admin)
+             #:label "Root admin capability"))
+
+    ;; Spawn capability registry (for CLI label→reference mapping)
+    (define cap-registry (spawn ^capability-registry))
+    ($ cap-registry 'register "root" root-cap)
 
     ;; Return actor references
-    (values gatekeeper session-actor)))
+    (values gatekeeper root-cap cap-registry)))
 
 ;;; Session Vat: manages sessions and context
 (define (spawn-session-vat store-path)
@@ -3426,29 +3563,9 @@ The **Graph Gatekeeper** is the security boundary—all Oxigraph access passes t
       (set-xm-session-discoveries!
        current-session
        (cons node-id (xm-session-discoveries current-session))))]))
-
-;;; Capability Vat: manages access control
-(define (^capability-actor bcom graph-ref)
-  (define caps (make-hash-table))
-
-  (methods
-   [(create-cap node-id permissions scope expires)
-    (let* ((token (generate-cap-token))
-           (cap-ref (string-append "xm:cap/" token)))
-      ;; Create a facet of the graph actor with limited permissions
-      (hash-set! caps cap-ref
-                 (make-capability-facet graph-ref node-id
-                                        permissions scope expires))
-      cap-ref)]
-
-   [(use-cap cap-ref)
-    (hash-ref caps cap-ref #f)]
-
-   [(revoke-cap cap-ref)
-    (hash-remove! caps cap-ref)]))
 ```
 
-### 7.4 Transactional Safety
+### 7.6 Transactional Safety
 
 Goblins provides transactional semantics:
 
@@ -3765,6 +3882,7 @@ invoke_gpt(f"--cap {gpt_cap}")
 | 0.10.0 | 2026-01-06 | Digital Services Team | Removed `xm query context` command; context construction is out of scope (single responsibility: storage, not LLM context engineering) |
 | 0.11.0 | 2026-01-06 | Digital Services Team | Added `xm link get` and `xm link list` commands for link discoverability |
 | 0.12.0 | 2026-01-06 | Digital Services Team | Added Section 3 Related Work comparing xm to Mem0, Letta, Zep, MeshOS, and research systems; renumbered subsequent sections |
+| 0.13.0 | 2026-01-06 | Digital Services Team | **BREAKING**: Rewrote capability model per Spritely Goblins (capabilities ARE actor references, not database records). Section 4.5 now describes facet-based attenuation where capabilities are ^graph-facet actors wrapping the gatekeeper. Section 7.2-7.5 updated with correct Goblins patterns. CLI cap commands updated for label→reference registry model. |
 
 ---
 
