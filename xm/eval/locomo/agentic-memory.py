@@ -1043,20 +1043,33 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
 def judge_answer(question: str, gold: str, generated: str) -> int:
     """Judge if answer is correct, with retry logic."""
 
-    # LLM Judge prompt (based on mem0 evaluation methodology)
+    # LLM Judge prompt (verbatim from mem0 evaluation)
     # https://github.com/mem0ai/mem0/blob/main/evaluation/metrics/llm_judge.py
-    prompt = f"""Your task is to label an answer to a question as 'CORRECT' or 'WRONG'.
+    prompt = f"""
+Your task is to label an answer to a question as 'CORRECT' or 'WRONG'. You will be given the following data:
+    (1) a question (posed by one user to another user),
+    (2) a 'gold' (ground truth) answer,
+    (3) a generated answer
+which you will score as CORRECT/WRONG.
 
+The point of the question is to ask about something one user should know about the other user based on their prior conversations.
+The gold answer will usually be a concise and short answer that includes the referenced topic, for example:
+Question: Do you remember what I got the last time I went to Hawaii?
+Gold answer: A shell necklace
+The generated answer might be much longer, but you should be generous with your grading - as long as it touches on the same topic as the gold answer, it should be counted as CORRECT.
+
+For time related questions, the gold answer will be a specific date, month, year, etc. The generated answer might be much longer or use relative time references (like "last Tuesday" or "next month"), but you should be generous with your grading - as long as it refers to the same date or time period as the gold answer, it should be counted as CORRECT. Even if the format differs (e.g., "May 7th" vs "7 May"), consider it CORRECT if it's the same date.
+
+Now it's time for the real question:
 Question: {question}
-Gold Answer: {gold}
-Generated Answer: {generated}
+Gold answer: {gold}
+Generated answer: {generated}
 
-Be generous with grading - if the generated answer touches on the same topic and contains the correct factual information, count it as CORRECT even if it's longer or differently formatted.
+First, provide a short (one sentence) explanation of your reasoning, then finish with CORRECT or WRONG.
+Do NOT include both CORRECT and WRONG in your response, or it will break the evaluation script.
 
-For time-related questions: different formats are OK (e.g., "May 7th" vs "7 May" vs "7 May 2023"), BUT the answer must reference the same date or time period. Different years (e.g., 2022 vs 2023) means WRONG.
-
-Just return the label CORRECT or WRONG in a json format with the key as 'label'.
-Example: {{"label": "CORRECT"}} or {{"label": "WRONG"}}"""
+Just return the label CORRECT or WRONG in a json format with the key as "label".
+"""
 
     max_retries = 5
     base_delay = 1
