@@ -16,6 +16,7 @@
   #:use-module (xm cli query)
   #:use-module (xm cli session)
   #:use-module (xm cli cap)
+  #:use-module (xm cli schema)
   #:use-module (xm store)
   #:export (main))
 
@@ -35,6 +36,7 @@ Commands:
   node       Manage knowledge nodes (create, get, update, delete)
   link       Manage links between nodes
   query      Query the knowledge graph (sparql, nodes, backlinks, path)
+  schema     Introspect schema (classes, predicates, describe)
   session    Manage agent sessions
   cap        Manage capabilities
   import     Import knowledge from files
@@ -158,6 +160,10 @@ Documentation: https://xm.dev/docs
                   (handle-cap-command subcommand
                                       (acons 'positional positional opts)
                                       global-opts store cap-ref))
+                 ((schema)
+                  (handle-schema-command subcommand
+                                         (acons 'positional positional opts)
+                                         global-opts store cap-ref))
                  ((import)
                   (handle-import-command opts global-opts store cap-ref))
                  ((export)
