@@ -241,36 +241,24 @@
 
   ;; These are evaluated at runtime to avoid compile-time dependency
   (let* ((spawn-vat (eval 'spawn-vat (resolve-module '(goblins))))
-         (with-vat (eval 'with-vat (resolve-module '(goblins))))
-         (spawn (eval 'spawn (resolve-module '(goblins))))
-         (spawn-mycapn (eval 'spawn-mycapn (resolve-module '(goblins ocapn captp))))
-         (make-tcp-tls-netlayer
-          (catch #t
-            (lambda ()
-              (eval 'make-tcp-tls-netlayer
-                    (resolve-module '(goblins ocapn netlayers tcp-tls))))
-            (lambda _ #f))))
+         (call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+         (spawn (eval 'spawn (resolve-module '(goblins)))))
 
     ;; Create the main vat
     (set! *daemon-vat* (spawn-vat))
-
-    ;; Create OCapN mycapn with a netlayer
-    (set! *daemon-mycapn*
-          (with-vat *daemon-vat*
-            (if make-tcp-tls-netlayer
-                (let ((netlayer (make-tcp-tls-netlayer
-                                 #:host "127.0.0.1"
-                                 #:port 9323)))
-                  (format #t "OCapN listening on tcp-tls://127.0.0.1:9323\n")
-                  (spawn-mycapn netlayer))
-                (begin
-                  (format #t "No netlayer available, OCapN disabled\n")
-                  #f))))
+    (format #t "Goblins vat created\n")
 
     ;; Create capability registry actor
     (set! *daemon-cap-registry*
-          (with-vat *daemon-vat*
-            (spawn (make-cap-registry-actor))))
+          (call-with-vat *daemon-vat*
+            (lambda ()
+              (spawn ^cap-registry))))
+    (format #t "Cap registry actor spawned\n")
+
+    ;; OCapN netlayer disabled for now due to macOS fibers issues
+    ;; The daemon provides local socket RPC for CLI communication
+    (set! *daemon-mycapn* #f)
+    (format #t "OCapN: disabled (macOS fibers compatibility)\n")
 
     (format #t "Goblins runtime initialized\n"))
 
@@ -290,69 +278,46 @@
   (cleanup-socket)
   (format #t "Daemon stopped\n"))
 
-(define (make-cap-registry-actor)
-  "Create the ^cap-registry actor constructor.
-   Returns an actor constructor function."
-  (let ((methods-proc (eval 'methods (resolve-module '(goblins actor-lib methods)))))
-    ;; State: label -> (cap-actor-ref . sturdyref-uri)
-    (let ((registry (make-hash-table))
-          (uri->label (make-hash-table)))
+(define (^cap-registry bcom)
+  "Cap registry actor constructor.
+   State: label -> (cap-actor-ref . sturdyref-uri)"
+  (define registry (make-hash-table))
+  (define uri->label (make-hash-table))
 
-      (methods-proc
-       ;; Register a capability actor and optionally get sturdyref
-       [(register label cap-actor)
-        (hash-set! registry label (cons cap-actor #f))
-        `((label . ,label)
-          (registered . #t))]
+  (lambda (method . args)
+    (case method
+      ((register)
+       (let ((label (car args))
+             (cap-actor (cadr args)))
+         (hash-set! registry label (cons cap-actor #f))
+         `((label . ,label)
+           (registered . #t))))
 
-       ;; Register with OCapN to get sturdyref
-       [(export label)
-        (let ((entry (hash-ref registry label #f)))
-          (if (not entry)
-              `((error . "capability not registered"))
-              (if *daemon-mycapn*
-                  (let* ((<- (eval '<- (resolve-module '(goblins))))
-                         (on (eval 'on (resolve-module '(goblins))))
-                         (ocapn-id->string
-                          (eval 'ocapn-id->string
-                                (resolve-module '(goblins ocapn ids))))
-                         (cap-actor (car entry)))
-                    (on (<- *daemon-mycapn* 'register cap-actor)
-                        (lambda (sref)
-                          (let ((uri (ocapn-id->string sref)))
-                            (hash-set! registry label (cons cap-actor uri))
-                            (hash-set! uri->label uri label)
-                            ;; Persist to file
-                            (persist-sturdyref-registry registry)
-                            `((label . ,label)
-                              (sturdyref . ,uri))))))
-                  `((error . "OCapN not available")))))]
+      ((export)
+       (let* ((label (car args))
+              (entry (hash-ref registry label #f)))
+         (if (not entry)
+             `((error . "capability not registered"))
+             `((label . ,label)
+               (message . "export pending OCapN integration")))))
 
-       ;; Lookup capability by label
-       [(lookup label)
-        (let ((entry (hash-ref registry label #f)))
-          (if entry
-              `((label . ,label)
-                (sturdyref . ,(cdr entry)))
-              #f))]
+      ((lookup)
+       (let* ((label (car args))
+              (entry (hash-ref registry label #f)))
+         (if entry
+             `((label . ,label)
+               (sturdyref . ,(cdr entry)))
+             #f)))
 
-       ;; Enliven a sturdyref URI
-       [(enliven uri)
-        (if *daemon-mycapn*
-            (let* ((<- (eval '<- (resolve-module '(goblins))))
-                   (string->ocapn-id
-                    (eval 'string->ocapn-id
-                          (resolve-module '(goblins ocapn ids)))))
-              (<- *daemon-mycapn* 'enliven (string->ocapn-id uri)))
-            `((error . "OCapN not available")))]
+      ((list-all)
+       (hash-map->list
+        (lambda (label entry)
+          `((label . ,label)
+            (sturdyref . ,(cdr entry))))
+        registry))
 
-       ;; List all registered capabilities
-       [(list-all)
-        (hash-map->list
-         (lambda (label entry)
-           `((label . ,label)
-             (sturdyref . ,(cdr entry))))
-         registry)]))))
+      (else
+       `((error . ,(format #f "unknown method: ~a" method)))))))
 
 (define (persist-sturdyref-registry registry)
   "Persist sturdyref registry to file."

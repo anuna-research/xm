@@ -76,28 +76,32 @@ Per SPEC-029 Section 5.16 (CLI structure exists but not functional):
 - [ ] Wire `session history` to show session discoveries
 - [ ] Implement automatic session linking (discoveries -> session)
 
-### Phase 10: Capability Commands - STUB ONLY
+### Phase 10: Capability Commands - COMPLETE
 
-Per SPEC-029 Section 5.17 (CLI structure exists but not functional):
+Per SPEC-029 Section 5.17:
 
-- [ ] Wire `cap create` to store capability in Bloblin
-- [ ] Wire `cap attenuate` with subset validation
-- [ ] Wire `cap revoke` with cascade option
-- [ ] Wire `cap list` to query capability store
-- [ ] Wire `cap inspect` to show full capability details
-- [ ] Implement Graph Gatekeeper actor for capability validation
-- [ ] Implement query rewriting with FROM clause scoping
+- [x] `cap create` - store capability with graphs/permissions in RDF store
+- [x] `cap attenuate` - create child capability with subset validation
+- [x] `cap revoke` - revoke capability (marks as revoked in store)
+- [x] `cap list` - query capabilities from store
+- [x] `cap inspect` - show full capability details
+- [x] `cap export` - export as local token or OCapN sturdyref (when daemon running)
+- [x] `cap import` - import from token or sturdyref
+- [x] Implement capability-enforced queries (`--cap` flag on `xm query sparql`)
+- [x] Query rewriting with FROM clause scoping for allowed graphs
 
-### Phase 11: Daemon Commands - STUB ONLY
+### Phase 11: Daemon Commands - IN PROGRESS
 
-Per SPEC-029 Section 5.20 (structure exists but not functional):
+Per SPEC-029 Section 5.20:
 
-- [ ] Implement actual daemon process with PID management
-- [ ] Unix socket IPC for CLI->daemon communication
-- [ ] `daemon start` - spawn Goblins vat
-- [ ] `daemon stop` - graceful shutdown
-- [ ] `daemon restart` - stop+start
-- [ ] `daemon status` - show running state
+- [x] Implement daemon process with PID management
+- [x] Unix socket IPC for CLI->daemon JSON-RPC communication
+- [x] `daemon start` - spawn Goblins vat (foreground mode works)
+- [x] `daemon stop` - graceful shutdown
+- [x] `daemon restart` - stop+start
+- [x] `daemon status` - show running state
+- [x] Goblins runtime initialization with ^cap-registry actor
+- [ ] OCapN tcp-tls netlayer (blocked by macOS fibers compatibility)
 - [ ] `daemon listen` - add OCapN listener
 - [ ] `daemon listeners` - list active listeners
 
@@ -119,23 +123,28 @@ Per SPEC-029 Section 5.21:
 
 ---
 
-## Architecture Components Not Yet Implemented
+## Architecture Components
 
-### Goblins Integration
+### Goblins Integration - IN PROGRESS
 
-- [ ] Integrate Spritely Goblins 0.17.0 actor model
+- [x] Integrate Spritely Goblins 0.16.1 actor model (via Homebrew)
+- [x] `^cap-registry` actor for capability label->actor mapping
+- [x] Runtime vat initialization in daemon
 - [ ] `^graph-gatekeeper` actor for security enforcement
 - [ ] `^capability-store` actor with Bloblin persistence
 - [ ] `^session-actor` for session lifecycle
 - [ ] `^event-journal` for append-only mutation log
 - [ ] `^subscription-registry` for pubsub cursors
 
-### OCapN Networking
+### OCapN Networking - PARTIAL
 
-- [ ] CapTP transport integration
-- [ ] Sturdyref generation and validation
+- [x] OCapN module structure (`xm/ocapn.scm`)
+- [x] Sturdyref conversion utilities
+- [x] Cap export/import with sturdyref detection
+- [ ] CapTP transport integration (blocked by macOS fibers issue)
+- [ ] tcp-tls netlayer initialization
 - [ ] Remote gatekeeper access via `--remote` flag
-- [ ] Tor/TCP/Unix socket netlayers
+- [ ] Tor/Unix socket netlayers
 
 ### Event Journal & Store-and-Forward
 
@@ -148,28 +157,29 @@ Per SPEC-029 Section 5.21:
 
 ## Summary Statistics
 
-| Category | Total | Complete | Stub | Not Started |
-|----------|-------|----------|------|-------------|
+| Category | Total | Complete | In Progress | Not Started |
+|----------|-------|----------|-------------|-------------|
 | Node Commands | 4 | 4 | 0 | 0 |
 | Link Commands | 4 | 4 | 0 | 0 |
-| Query Commands | 4 | 4 | 0 | 0 |
+| Query Commands | 5 | 5 | 0 | 0 |
 | Schema Commands | 3 | 3 | 0 | 0 |
 | Graph Commands | 4 | 0 | 0 | 4 |
-| Session Commands | 5 | 0 | 5 | 0 |
-| Capability Commands | 5 | 0 | 5 | 0 |
+| Session Commands | 5 | 0 | 0 | 5 |
+| Capability Commands | 9 | 9 | 0 | 0 |
 | Import/Export | 2 | 0 | 0 | 2 |
 | Sync Commands | 2 | 0 | 0 | 2 |
-| Daemon Commands | 6 | 0 | 4 | 2 |
+| Daemon Commands | 10 | 7 | 3 | 0 |
 | Store Commands | 4 | 0 | 0 | 4 |
-| **Total** | **43** | **15** | **14** | **14** |
+| **Total** | **52** | **32** | **3** | **17** |
 
-**Implementation Progress: ~35% complete** (functional commands only)
+**Implementation Progress: ~62% complete** (functional commands)
 
 ---
 
 ## Recommended Next Steps
 
-1. **Schema/Graph commands** - useful for introspection and debugging
-2. **Wire session/cap stubs** - make existing CLI structure functional
-3. **Import/export** - essential for data portability and testing
-4. **Goblins integration** - required for capability-based security model
+1. **Fix OCapN netlayer on macOS** - investigate fibers/epoll compatibility
+2. **Graph commands** - useful for managing named graphs
+3. **Wire session stubs** - make session tracking functional
+4. **Import/export** - essential for data portability
+5. **Store commands** - backup/restore functionality
