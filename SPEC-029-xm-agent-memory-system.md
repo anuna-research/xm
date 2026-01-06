@@ -4,7 +4,7 @@
 |---|---|
 | Document ID | SPEC-029 |
 | Title | Cross Memory (xm): Linked Memory for LLM Agents |
-| Version | 0.11.0 |
+| Version | 0.12.0 |
 | Status | Draft |
 | Created | 2026-01-06 |
 | Last Updated | 2026-01-06 |
@@ -94,9 +94,69 @@
 
 ---
 
-## 3. Solution Design
+## 3. Related Work
 
-### 3.1 Architecture Overview
+### 3.1 Open Source Memory Frameworks
+
+| Project | Architecture | Strengths | Limitations vs. xm |
+|---------|--------------|-----------|-------------------|
+| **[Mem0](https://github.com/mem0ai/mem0)** | Vector + graph hybrid, cloud-first | Production-tested, 26% accuracy improvement, graph relations | API-key security, Python SDK only, proprietary schema |
+| **[Letta (MemGPT)](https://github.com/letta-ai/letta)** | Virtual context management | Infinite context handling, Agent Development Environment | No capability delegation, single-agent focus |
+| **[Zep](https://github.com/getzep/zep)** | Temporal knowledge graph (Graphiti) | Time-aware memory, episodic + semantic layers | No distributed security model, Python SDK |
+| **[MeshOS](https://github.com/Props-Labs/mesh-os)** | PostgreSQL + pgvector | Graph relationships, versioned knowledge, self-hosted | Row-level security (not capability-based), GraphQL only |
+| **[LangGraph Memory](https://docs.langchain.com/oss/python/concepts/memory)** | MongoDB/namespace-based | LangChain ecosystem integration, cross-session persistence | Tied to LangChain, no semantic standards |
+
+### 3.2 Research Systems
+
+| Paper | Key Innovation | Relation to xm |
+|-------|----------------|----------------|
+| **[A-MEM](https://arxiv.org/abs/2502.12110)** (NeurIPS 2025) | Zettelkasten-inspired interconnected knowledge networks with dynamic indexing | Similar linked-data philosophy; xm uses RDF rather than custom format |
+| **[Collaborative Memory](https://arxiv.org/html/2505.18279v1)** | Bipartite access graphs for multi-user memory sharing with dynamic access control | xm's capability model is more granular (per-graph vs. per-user) |
+| **[MIRIX](https://arxiv.org/html/2507.07957v1)** | Six-component architecture (Core, Episodic, Semantic, Procedural, Resource, Knowledge Vault) | xm uses generic node types; memory taxonomy is out of scope (composable) |
+| **[MemMachine](https://memverge.com/)** | Four memory modes (Episodic, Semantic, Procedural, Profile) | Similar memory type thinking; xm defers to composition over built-in types |
+
+### 3.3 Differentiating Factors
+
+**Where xm differs from all surveyed systems:**
+
+| Capability | xm | Industry Standard |
+|------------|-----|-------------------|
+| **Security model** | Object capabilities (cryptographic, attenuable) | API keys or row-level policies |
+| **Data format** | RDF triples with SPARQL | Proprietary JSON schemas |
+| **Vocabularies** | PROV-O, Dublin Core, SKOS | Custom, non-portable |
+| **Distribution** | OCapN (peer-to-peer, encrypted) | Central server or cloud API |
+| **Agent interface** | CLI with JSON (language-agnostic) | Python/TypeScript SDKs |
+| **Capability delegation** | First-class (attenuate and share) | Not supported |
+
+**Where competitors excel:**
+
+| Capability | Best-in-Class | xm Approach |
+|------------|---------------|-------------|
+| **Context construction** | Mem0, Letta, Zep (built-in retrieval/compression) | Out of scope; compose with external tools |
+| **Temporal reasoning** | Zep Graphiti (time-evolving queries) | Timestamps only; SPARQL for custom queries |
+| **Memory taxonomy** | MIRIX, MemMachine (explicit episodic/semantic/procedural) | Generic nodes; taxonomy via composition |
+| **Ecosystem integration** | LangGraph (LangChain), Mem0 (LlamaIndex) | Standalone; integrates via CLI |
+| **Production readiness** | Mem0 (battle-tested at scale) | Specification stage |
+
+### 3.4 Design Philosophy
+
+xm deliberately prioritizes:
+
+1. **Security over convenience** — Object capabilities require explicit delegation but provide cryptographic guarantees no API-key system can match.
+
+2. **Standards over speed-to-market** — RDF/SPARQL and W3C vocabularies ensure long-term interoperability at the cost of a steeper learning curve.
+
+3. **Composition over features** — Context construction, memory taxonomies, and hallucination detection are valuable but belong in separate tools that consume xm's storage primitive.
+
+4. **Distribution over simplicity** — OCapN adds complexity but enables the heterogeneous agent ecosystem (Claude + GPT + local models) that motivates xm's existence.
+
+This positions xm as infrastructure ("SQLite for agent memory") rather than a complete solution ("Firebase for agents").
+
+---
+
+## 4. Solution Design
+
+### 4.1 Architecture Overview
 
 xm uses a **three-layer architecture**: OCapN (network), Goblins (security), and Oxigraph (storage).
 
@@ -193,7 +253,7 @@ LLM agents are inherently distributed—Claude runs on Anthropic's infrastructur
 5. Scoped query executed against Oxigraph via FFI
 6. Results returned through encrypted OCapN channel
 
-### 3.2 Technology Choices
+### 4.2 Technology Choices
 
 **Three-Layer Stack**:
 
@@ -266,11 +326,11 @@ Guile ──(FFI)──► C ABI ──► Rust (oxigraph crate)
 └── config.scm             # User configuration
 ```
 
-### 3.3 Vocabulary
+### 4.3 Vocabulary
 
 xm reuses established semantic web vocabularies wherever possible, defining custom terms only where no suitable standard exists.
 
-#### 3.3.1 Namespace Prefixes
+#### 4.3.1 Namespace Prefixes
 
 | Prefix | Namespace URI | Specification |
 |--------|---------------|---------------|
@@ -282,7 +342,7 @@ xm reuses established semantic web vocabularies wherever possible, defining cust
 | `skos:` | http://www.w3.org/2004/02/skos/core# | [SKOS](https://www.w3.org/TR/skos-reference/) |
 | `xm:` | https://xm.dev/ns/v1# | xm-specific (this spec) |
 
-#### 3.3.2 Standard Vocabulary Mapping
+#### 4.3.2 Standard Vocabulary Mapping
 
 **Classes** (node types):
 
@@ -306,7 +366,7 @@ xm reuses established semantic web vocabularies wherever possible, defining cust
 | label | `rdfs:label` | http://www.w3.org/2000/01/rdf-schema#label |
 | description | `rdfs:comment` | http://www.w3.org/2000/01/rdf-schema#comment |
 
-#### 3.3.3 xm-Specific Vocabulary
+#### 4.3.3 xm-Specific Vocabulary
 
 The following terms have no suitable standard equivalent and are defined in the `xm:` namespace:
 
@@ -319,7 +379,7 @@ The following terms have no suitable standard equivalent and are defined in the 
 | `xm:capabilityScope` | Property | https://xm.dev/ns/v1#capabilityScope | Scope of a capability (node, subgraph, global) |
 | `xm:capabilityExpires` | Property | https://xm.dev/ns/v1#capabilityExpires | Expiration timestamp for a capability |
 
-#### 3.3.4 Vocabulary Usage in CLI
+#### 4.3.4 Vocabulary Usage in CLI
 
 The CLI accepts both full URIs and shorthand prefixes:
 
@@ -334,9 +394,9 @@ xm link create --predicate "dcterms:replaces" ...
 xm link create --predicate "uses" ...  # expands to xm:uses
 ```
 
-### 3.4 Semantic Data Model
+### 4.4 Semantic Data Model
 
-#### 3.4.1 Node Types
+#### 4.4.1 Node Types
 
 All knowledge is represented as **nodes** in a semantic graph.
 
@@ -362,7 +422,7 @@ All knowledge is represented as **nodes** in a semantic graph.
 | `agent` | LLM agent identity | "claude-code-2026-01-06" |
 | `artifact` | Generated/referenced file | "src/auth.py analysis" |
 
-#### 3.4.2 Link Types (Semantic Predicates)
+#### 4.4.2 Link Types (Semantic Predicates)
 
 Links connect nodes with typed, directional relationships.
 
@@ -392,7 +452,7 @@ Links connect nodes with typed, directional relationships.
 | `xm:confidence` | xm:confidence | entity → xsd:decimal | Confidence score (0.0-1.0) |
 | `prov:hadPrimarySource` | prov:hadPrimarySource | entity → entity | Origin URL or identifier |
 
-#### 3.4.3 Named Graphs (Security Boundaries)
+#### 4.4.3 Named Graphs (Security Boundaries)
 
 All RDF data is stored as **quads** (subject, predicate, object, **graph**). Named graphs serve as security boundaries for capability scoping.
 
@@ -449,7 +509,7 @@ WHERE { ?project xm:dependsOn ?dep }
 
 Data in `xm:graph/project/secret-project` is invisible to this query.
 
-#### 3.4.4 Backlinks (Org-roam Inspiration)
+#### 4.4.4 Backlinks (Org-roam Inspiration)
 
 Every link automatically creates a queryable backlink.
 
@@ -467,9 +527,9 @@ xm query backlinks --node "xm:entity/fastapi" --predicate "xm:uses"
 # Output shows all nodes that link TO FastAPI with "xm:uses" predicate
 ```
 
-### 3.5 Capability Model
+### 4.5 Capability Model
 
-#### 3.5.1 Capability Structure
+#### 4.5.1 Capability Structure
 
 Capabilities grant access to **named graphs**, not individual nodes. This integrates with Oxigraph's quad model.
 
@@ -491,7 +551,7 @@ Capabilities grant access to **named graphs**, not individual nodes. This integr
 | `write` | Insert/update in allowed graphs | INSERT DATA, DELETE DATA |
 | `admin` | Delete graphs, modify capabilities | DROP GRAPH, capability attenuation |
 
-#### 3.5.2 Capability Attenuation
+#### 4.5.2 Capability Attenuation
 
 Capabilities can only be **attenuated** (weakened), never strengthened. A child capability must be a subset of its parent:
 
@@ -507,7 +567,7 @@ Capabilities can only be **attenuated** (weakened), never strengthened. A child 
   #:graphs '("xm:graph/secret"))  ; ERROR: not in parent's graphs
 ```
 
-#### 3.5.3 Capability Sharing Protocol
+#### 4.5.3 Capability Sharing Protocol
 
 ```bash
 # Create a capability granting access to specific graphs
@@ -533,7 +593,7 @@ xm query sparql --cap "xm:cap/abc123..." \
   "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10"
 ```
 
-#### 3.5.4 Public Graph (No Capability Required)
+#### 4.5.4 Public Graph (No Capability Required)
 
 The `xm:graph/public` graph is readable without a capability:
 
@@ -543,7 +603,7 @@ xm query sparql "SELECT ?s WHERE { ?s a xm:Framework }"
 # Automatically scoped to: FROM <xm:graph/public>
 ```
 
-### 3.6 Session Model
+### 4.6 Session Model
 
 Sessions group related interactions and automatically link discoveries.
 
@@ -583,11 +643,11 @@ xm session end --summary "Found OAuth misconfiguration"
 xm session resume --id "xm:session/abc123"
 ```
 
-### 3.7 State Synchronization
+### 4.7 State Synchronization
 
 xm leverages Goblins' native distributed primitives for state synchronization between heterogeneous agents.
 
-#### 3.7.1 Synchronization Patterns
+#### 4.7.1 Synchronization Patterns
 
 | Pattern | Mechanism | Use Case |
 |---------|-----------|----------|
@@ -595,7 +655,7 @@ xm leverages Goblins' native distributed primitives for state synchronization be
 | Push-based | Pubsub subscriptions | Real-time change notifications |
 | Handoff | Capability delegation | Transfer session to another agent |
 
-#### 3.7.2 Sturdyref Sharing (Remote Capability Access)
+#### 4.7.2 Sturdyref Sharing (Remote Capability Access)
 
 Agents access remote xm daemons by enlivening sturdyrefs shared out-of-band:
 
@@ -621,7 +681,7 @@ Agents access remote xm daemons by enlivening sturdyrefs shared out-of-band:
 xm --remote "ocapn:tor:xyz123...#swiss-num" query sparql "SELECT ..."
 ```
 
-#### 3.7.3 Pubsub for Change Notifications
+#### 4.7.3 Pubsub for Change Notifications
 
 The Graph Gatekeeper maintains a pubsub actor for broadcasting graph mutations:
 
@@ -697,7 +757,7 @@ xm subscribe --cap "xm:cap/abc123" --graphs "xm:graph/project/acme-api"
 {"event":"delete","graph":"xm:graph/project/acme-api","data":{...},"timestamp":"2026-01-06T12:01:00Z"}
 ```
 
-#### 3.7.4 Promise Pipelining for Efficient Queries
+#### 4.7.4 Promise Pipelining for Efficient Queries
 
 Goblins' promise pipelining reduces round-trips for chained operations:
 
@@ -715,7 +775,7 @@ Goblins' promise pipelining reduces round-trips for chained operations:
 
 This is particularly important for geographically distributed agents where latency dominates.
 
-#### 3.7.5 Reconnection and Partition Handling
+#### 4.7.5 Reconnection and Partition Handling
 
 **Sturdyref resilience**: Sturdyrefs remain valid across disconnections. When connection is restored, the reference automatically reconnects to the same actor.
 
@@ -745,7 +805,7 @@ xm --offline node create --type fact --property "content=..."
 xm sync --target "ocapn:tor:xyz..."
 ```
 
-#### 3.7.6 Conflict Resolution
+#### 4.7.6 Conflict Resolution
 
 For concurrent writes to the same graph by multiple agents, xm uses **last-write-wins** with full provenance:
 
@@ -773,11 +833,11 @@ GRAPH <xm:graph/history/acme-api> {
 
 **Future consideration**: CRDTs for specific data types (counters, sets) where automatic merge is preferable to last-write-wins.
 
-### 3.8 Store-and-Forward Messaging
+### 4.8 Store-and-Forward Messaging
 
-Real-time pubsub (Section 3.7.3) loses messages when subscribers are offline. Store-and-forward ensures reliable delivery using Goblins' persistent queue primitives.
+Real-time pubsub (Section 4.7.3) loses messages when subscribers are offline. Store-and-forward ensures reliable delivery using Goblins' persistent queue primitives.
 
-#### 3.8.1 Architecture Overview
+#### 4.8.1 Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -811,7 +871,7 @@ Real-time pubsub (Section 3.7.3) loses messages when subscribers are offline. St
 └───────────────┘      └───────────────┘      └───────────────┘
 ```
 
-#### 3.8.2 Event Journal
+#### 4.8.2 Event Journal
 
 The Event Journal is an append-only log of all graph mutations, stored in Bloblin for durability.
 
@@ -874,7 +934,7 @@ The Event Journal is an append-only log of all graph mutations, stored in Blobli
 │   └── subscriptions.bloblin # Subscriber cursors
 ```
 
-#### 3.8.3 Subscription Cursors
+#### 4.8.3 Subscription Cursors
 
 Each subscriber maintains a **cursor** (last-seen sequence number). On reconnect, events from cursor to head are replayed.
 
@@ -908,7 +968,7 @@ Each subscriber maintains a **cursor** (last-seen sequence number). On reconnect
     (hash-remove! cursors subscriber-id)]))
 ```
 
-#### 3.8.4 Outbox for Offline Mutations
+#### 4.8.4 Outbox for Offline Mutations
 
 When an agent operates offline, mutations queue in a local **outbox** and replay on reconnect.
 
@@ -972,7 +1032,7 @@ When an agent operates offline, mutations queue in a local **outbox** and replay
 └─────────────────┘                         └─────────────────┘
 ```
 
-#### 3.8.5 Reliable Delivery Protocol
+#### 4.8.5 Reliable Delivery Protocol
 
 Combining journal, cursors, and outbox for guaranteed delivery:
 
@@ -1007,7 +1067,7 @@ Combining journal, cursors, and outbox for guaranteed delivery:
       (length events))]))
 ```
 
-#### 3.8.6 Delivery Guarantees
+#### 4.8.6 Delivery Guarantees
 
 | Guarantee | Mechanism |
 |-----------|-----------|
@@ -1020,7 +1080,7 @@ Combining journal, cursors, and outbox for guaranteed delivery:
 - Exactly-once delivery (idempotent mutations recommended)
 - Global ordering across multiple servers (local ordering only)
 
-#### 3.8.7 Journal Compaction
+#### 4.8.7 Journal Compaction
 
 Old events are compacted to manage storage growth:
 
@@ -1044,9 +1104,9 @@ Subscribers with cursors older than the oldest available event receive a `cursor
 
 ---
 
-## 4. CLI Specification
+## 5. CLI Specification
 
-### 4.1 Design Principles
+### 5.1 Design Principles
 
 Following [Command Line Interface Guidelines](https://clig.dev/):
 
@@ -1059,7 +1119,7 @@ Following [Command Line Interface Guidelines](https://clig.dev/):
 7. **Consistent Across Subcommands**: Same flag names, output formatting, and terminology throughout
 8. **Fail Fast with Actionable Errors**: Validate input early; provide guidance on how to fix problems
 
-### 4.2 Global Options
+### 5.2 Global Options
 
 ```bash
 xm [global-options] <command> [command-options]
@@ -1082,7 +1142,7 @@ Global Options:
   --remote URI         Connect to remote xm daemon via OCapN
 ```
 
-### 4.3 Environment Variables
+### 5.3 Environment Variables
 
 Environment variables use `XM_` prefix. Configuration precedence (highest to lowest):
 
@@ -1111,7 +1171,7 @@ XDG_DATA_HOME        # Data directory (default: ~/.local/share)
 
 **Never read secrets from environment variables**. Capability references should be passed via `--cap` flag, read from config files with appropriate permissions, or piped via stdin.
 
-### 4.4 Exit Codes
+### 5.4 Exit Codes
 
 | Code | Meaning |
 |------|---------|
@@ -1123,7 +1183,7 @@ XDG_DATA_HOME        # Data directory (default: ~/.local/share)
 | 5 | Conflict (concurrent modification, constraint violation) |
 | 130 | Interrupted (Ctrl-C) |
 
-### 4.5 Output Formats
+### 5.5 Output Formats
 
 **Human-readable (default)**:
 ```bash
@@ -1176,7 +1236,7 @@ $ xm query nodes --type entity --json
 {"id": "xm:entity/web-frontend", "type": "entity", ...}
 ```
 
-### 4.6 Error Handling
+### 5.6 Error Handling
 
 Errors are written to stderr with actionable guidance:
 
@@ -1221,7 +1281,7 @@ Error: Permission denied
 }
 ```
 
-### 4.7 Help Text
+### 5.7 Help Text
 
 Help text leads with examples, then formal documentation:
 
@@ -1261,7 +1321,7 @@ Global Flags:
 Documentation: https://xm.dev/docs/cli/node-create
 ```
 
-### 4.8 Dangerous Operations
+### 5.8 Dangerous Operations
 
 Destructive operations require confirmation or `--force`:
 
@@ -1293,7 +1353,7 @@ Would orphan: 12 links
   ...
 ```
 
-### 4.9 Progress and Long-Running Operations
+### 5.9 Progress and Long-Running Operations
 
 Show progress immediately for operations that may take time:
 
@@ -1315,7 +1375,7 @@ $ xm import --format turtle large-dataset.ttl --json > result.json
 
 Ctrl-C interrupts immediately. Second Ctrl-C skips cleanup.
 
-### 4.10 Stdin/Stdout Composability
+### 5.10 Stdin/Stdout Composability
 
 Support `-` for stdin/stdout to enable piping:
 
@@ -1334,7 +1394,7 @@ xm export --format turtle --node xm:entity/acme-api | \
   xm --remote "ocapn:tor:xyz..." import --format turtle -
 ```
 
-### 4.11 Node Commands
+### 5.11 Node Commands
 
 #### `xm node create`
 
@@ -1452,7 +1512,7 @@ Examples:
   xm node delete xm:entity/acme-api --dry-run
 ```
 
-### 4.12 Link Commands
+### 5.12 Link Commands
 
 #### `xm link create`
 
@@ -1590,7 +1650,7 @@ Found 5 links:
 {"id": "xm:link/def456", "source": "xm:entity/acme-api", "predicate": "xm:dependsOn", "target": "xm:entity/auth-service"}
 ```
 
-### 4.13 Query Commands
+### 5.13 Query Commands
 
 #### `xm query sparql`
 
@@ -1750,7 +1810,7 @@ Found 1 path (2 hops):
 }
 ```
 
-### 4.14 Session Commands
+### 5.14 Session Commands
 
 #### `xm session start`
 
@@ -1874,7 +1934,7 @@ Examples:
 # Shows nodes/links created during session
 ```
 
-### 4.15 Capability Commands
+### 5.15 Capability Commands
 
 #### `xm cap create`
 
@@ -1989,7 +2049,7 @@ Examples:
   xm cap inspect xm:cap/xyz789
 ```
 
-### 4.16 Import/Export Commands
+### 5.16 Import/Export Commands
 
 #### `xm import`
 
@@ -2051,7 +2111,7 @@ Examples:
   xm export -f turtle --graph xm:graph/project/acme-api
 ```
 
-### 4.17 Synchronization Commands
+### 5.17 Synchronization Commands
 
 #### `xm subscribe`
 
@@ -2122,7 +2182,7 @@ Syncing with ocapn:tor:xyz123...
 }
 ```
 
-### 4.17 Daemon Commands
+### 5.18 Daemon Commands
 
 xm uses an **embedded daemon** architecture. The daemon auto-starts on first CLI invocation and runs in the background, managing the store, event journal, and OCapN listeners.
 
@@ -2295,9 +2355,9 @@ bind = "0.0.0.0"      # Use "127.0.0.1" for local-only
 
 ---
 
-## 5. Data Models
+## 6. Data Models
 
-### 5.1 Guile Scheme Definitions
+### 6.1 Guile Scheme Definitions
 
 ```scheme
 ;;; xm/types.scm - Core type definitions
@@ -2354,7 +2414,7 @@ bind = "0.0.0.0"      # Use "127.0.0.1" for local-only
   (parent xm-session-parent))
 ```
 
-### 5.2 URI Scheme
+### 6.2 URI Scheme
 
 xm uses URIs from standard vocabularies where possible, with `xm:` namespace for identifiers and custom predicates.
 
@@ -2392,7 +2452,7 @@ xm-specific (when no standard exists):
   xm:confidence          - Confidence score (0.0-1.0)
 ```
 
-### 5.3 JSON Wire Format
+### 6.3 JSON Wire Format
 
 All CLI output follows this envelope:
 
@@ -2424,9 +2484,9 @@ Error format:
 
 ---
 
-## 6. Goblins Actor Architecture
+## 7. Goblins Actor Architecture
 
-### 6.1 Oxigraph FFI Bindings
+### 7.1 Oxigraph FFI Bindings
 
 ```scheme
 ;;; xm/oxigraph-ffi.scm - FFI bindings to Oxigraph
@@ -2472,7 +2532,7 @@ Error format:
   (oxigraph-store-update store (string->pointer sparql)))
 ```
 
-### 6.2 Graph Gatekeeper Actor
+### 7.2 Graph Gatekeeper Actor
 
 The **Graph Gatekeeper** is the security boundary—all Oxigraph access passes through it.
 
@@ -2568,7 +2628,7 @@ The **Graph Gatekeeper** is the security boundary—all Oxigraph access passes t
         (cap-id child-cap)))]))
 ```
 
-### 6.3 Vat Organization
+### 7.3 Vat Organization
 
 ```scheme
 ;;; xm/vats.scm - Vat setup and initialization
@@ -2672,7 +2732,7 @@ The **Graph Gatekeeper** is the security boundary—all Oxigraph access passes t
     (hash-remove! caps cap-ref)]))
 ```
 
-### 6.2 Transactional Safety
+### 7.4 Transactional Safety
 
 Goblins provides transactional semantics:
 
@@ -2693,7 +2753,7 @@ Goblins provides transactional semantics:
 
 ---
 
-## 7. Implementation Phases
+## 8. Implementation Phases
 
 ### Phase 1: Oxigraph FFI Foundation (Storage Layer)
 
@@ -2811,35 +2871,35 @@ Goblins provides transactional semantics:
 
 ---
 
-## 8. Security Considerations
+## 9. Security Considerations
 
-### 8.1 Local Security
+### 9.1 Local Security
 
 - Store directory permissions: `0700` (user-only)
 - No secrets in node properties (warn on patterns)
 - Capability tokens: cryptographically random, 256-bit
 
-### 8.2 Capability Security
+### 9.2 Capability Security
 
 - Object capabilities are unforgeable references
 - No ambient authority; all access via explicit caps
 - Capabilities attenuate (can only reduce permissions)
 - Revocation is immediate and complete
 
-### 8.3 Agent Trust
+### 9.3 Agent Trust
 
 - Agent IDs are self-declared (no verification by default)
 - Provenance tracks which agent created each fact
 - Confidence scores indicate trust level
 - No automatic trust elevation
 
-### 8.4 Data Privacy
+### 9.4 Data Privacy
 
 - All storage is local (no telemetry)
 - Export requires explicit user action
 - Future: OCapN uses encrypted transport
 
-### 8.5 Multi-Agent Isolation
+### 9.5 Multi-Agent Isolation
 
 When multiple agents operate from the same environment (same machine, same user account), capability boundaries are maintained through **invoker-mediated provisioning**:
 
@@ -2928,7 +2988,7 @@ invoke_gpt(f"--cap {gpt_cap}")
 
 ---
 
-## 9. Success Metrics
+## 10. Success Metrics
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
@@ -2941,7 +3001,7 @@ invoke_gpt(f"--cap {gpt_cap}")
 
 ---
 
-## 10. Traceability
+## 11. Traceability
 
 ### External References
 
@@ -2988,6 +3048,7 @@ invoke_gpt(f"--cap {gpt_cap}")
 | 0.9.0 | 2026-01-06 | Digital Services Team | Replaced `xm server` with embedded daemon architecture; daemon auto-starts on first CLI command; added `xm daemon`, `xm listen`, `xm listeners` commands; added daemon.toml configuration |
 | 0.10.0 | 2026-01-06 | Digital Services Team | Removed `xm query context` command; context construction is out of scope (single responsibility: storage, not LLM context engineering) |
 | 0.11.0 | 2026-01-06 | Digital Services Team | Added `xm link get` and `xm link list` commands for link discoverability |
+| 0.12.0 | 2026-01-06 | Digital Services Team | Added Section 3 Related Work comparing xm to Mem0, Letta, Zep, MeshOS, and research systems; renumbered subsequent sections |
 
 ---
 
