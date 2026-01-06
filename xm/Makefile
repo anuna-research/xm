@@ -1,7 +1,7 @@
 # xm - Cross Memory CLI
 # Makefile for building, testing, and running the xm agent memory system
 
-.PHONY: all build build-debug test test-rust test-guile clean install uninstall run check fmt help
+.PHONY: all build build-debug test test-rust test-guile clean install uninstall run check fmt help patch-goblins unpatch-goblins check-patches
 
 # Configuration
 CARGO := cargo
@@ -118,6 +118,43 @@ uninstall: ## Uninstall xm from PREFIX
 	rm -f $(PREFIX)/lib/$(LIB_NAME).dylib $(PREFIX)/lib/$(LIB_NAME).so
 	rm -rf $(PREFIX)/share/guile/site/3.0/xm
 	@echo "Uninstalled xm from $(PREFIX)"
+
+## Goblins patches (for macOS compatibility)
+
+GOBLINS_DIR := /opt/homebrew/share/guile/site/3.0
+
+check-patches: ## Check if Goblins patches are needed
+	@echo "Checking Goblins macOS patches..."
+	@if grep -q "accept resource O_NONBLOCK" $(GOBLINS_DIR)/goblins/ocapn/netlayer/tcp-tls.scm 2>/dev/null; then \
+		echo "  tcp-tls.scm: NEEDS PATCH (passes O_NONBLOCK to accept)"; \
+	else \
+		echo "  tcp-tls.scm: OK (already patched or different version)"; \
+	fi
+	@if grep -q "accept our-server-sock SOCK_NONBLOCK" $(GOBLINS_DIR)/goblins/ocapn/netlayer/testuds.scm 2>/dev/null; then \
+		echo "  testuds.scm: NEEDS PATCH (passes SOCK_NONBLOCK to accept)"; \
+	else \
+		echo "  testuds.scm: OK (already patched or different version)"; \
+	fi
+
+patch-goblins: ## Apply macOS patches to Goblins netlayers (requires sudo)
+	@echo "Applying Goblins macOS patches..."
+	@echo "This fixes accept() calls that fail on macOS (lacks accept4 syscall)"
+	@if [ -f patches/goblins-tcp-tls-macos.patch ]; then \
+		cd $(GOBLINS_DIR) && sudo patch -p1 --forward < $(CURDIR)/patches/goblins-tcp-tls-macos.patch || true; \
+	fi
+	@if [ -f patches/goblins-testuds-macos.patch ]; then \
+		cd $(GOBLINS_DIR) && sudo patch -p1 --forward < $(CURDIR)/patches/goblins-testuds-macos.patch || true; \
+	fi
+	@echo "Patches applied. Clear Guile cache if needed: rm -rf ~/.cache/guile/ccache"
+
+unpatch-goblins: ## Reverse macOS patches from Goblins netlayers (requires sudo)
+	@echo "Reversing Goblins macOS patches..."
+	@if [ -f patches/goblins-tcp-tls-macos.patch ]; then \
+		cd $(GOBLINS_DIR) && sudo patch -R -p1 --forward < $(CURDIR)/patches/goblins-tcp-tls-macos.patch || true; \
+	fi
+	@if [ -f patches/goblins-testuds-macos.patch ]; then \
+		cd $(GOBLINS_DIR) && sudo patch -R -p1 --forward < $(CURDIR)/patches/goblins-testuds-macos.patch || true; \
+	fi
 
 ## Cleanup
 

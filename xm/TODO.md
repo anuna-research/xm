@@ -144,7 +144,13 @@ Per SPEC-029 Section 5.21:
 - [x] CapTP transport integration (fibers 1.4.0 works on macOS)
 - [x] UDS netlayer (`xm/ocapn/netlayer-uds.scm` - macOS compatible)
 - [x] mycapn actor for capability registration with UDS networking
-- [ ] tcp-tls netlayer (Goblins upstream has macOS accept() bug)
+- [x] tcp-tls netlayer (patched - run `make patch-goblins` to apply)
+      - Upstream bug: Goblins passes `O_NONBLOCK` to `accept()` which fails on macOS
+      - macOS lacks `accept4()` syscall, only supports `accept()` without flags
+      - Fix: `patches/goblins-tcp-tls-macos.patch` and `patches/goblins-testuds-macos.patch`
+      - Apply with: `make patch-goblins` (requires sudo)
+      - Check status: `make check-patches`
+      - TODO: Submit upstream patch to Goblins
 - [ ] Remote gatekeeper access via `--remote` flag
 - [ ] Tor netlayer
 

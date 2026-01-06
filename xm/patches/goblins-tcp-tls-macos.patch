@@ -1,0 +1,13 @@
+--- a/goblins/ocapn/netlayer/tcp-tls.scm
++++ b/goblins/ocapn/netlayer/tcp-tls.scm
+@@ -260,7 +260,9 @@
+   (define (incoming-accept)
+     (on (<- server-socket-io
+             (lambda (resource)
+-              (accept resource O_NONBLOCK)))
++              ;; macOS fix: don't pass flags to accept() - lacks accept4()
++              ;; use-nonblocking-i/o sets O_NONBLOCK via fcntl() after
++              (accept resource)))
+         (match-lambda
+           ((client-socket . _)
+            (setvbuf client-socket 'block)

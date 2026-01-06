@@ -1,0 +1,15 @@
+--- a/goblins/ocapn/netlayer/testuds.scm
++++ b/goblins/ocapn/netlayer/testuds.scm
+@@ -36,9 +36,12 @@
+   (define our-server-sock
+     (make-server-unix-domain-socket (sock-filename-for-id peer-id)))
+   (define (incoming-accept)
+-    (match (accept our-server-sock SOCK_NONBLOCK)
++    ;; macOS fix: don't pass flags to accept() - lacks accept4()
++    (match (accept our-server-sock)
+       ((client . addr)
++       ;; Set non-blocking via fcntl (portable)
++       (fcntl client F_SETFL (logior O_NONBLOCK (fcntl client F_GETFL)))
+        (setvbuf client 'block 1024)
+        client)))
+   (define (outgoing-connect-location location)
