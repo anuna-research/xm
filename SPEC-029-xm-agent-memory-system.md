@@ -4,7 +4,7 @@
 |---|---|
 | Document ID | SPEC-029 |
 | Title | Cross Memory (xm): Linked Memory for LLM Agents |
-| Version | 0.9.0 |
+| Version | 0.10.0 |
 | Status | Draft |
 | Created | 2026-01-06 |
 | Last Updated | 2026-01-06 |
@@ -1664,49 +1664,6 @@ Found 1 path (2 hops):
 }
 ```
 
-#### `xm query context`
-
-Build a token-budgeted context window for an agent.
-
-```bash
-xm query context --focus NODE_ID [--max-tokens N] [--include TYPES]...
-
-Flags:
-      --focus NODE_ID          Central node for context (required)
-      --max-tokens N           Token budget (default: 4000)
-      --include TYPES          Node types to include: fact,entity,artifact,decision,research (repeatable)
-      --depth N                Maximum traversal depth (default: 2)
-
-Examples:
-  # Build context around an entity
-  xm query context --focus xm:entity/acme-api \
-    --max-tokens 4000 \
-    --include fact,entity,artifact
-
-# Human output (default)
-Context for xm:entity/acme-api (3,847 / 4,000 tokens)
-
-  Focus: acme-api (repository)
-
-  Related entities (5):
-    → uses → FastAPI
-    → dependsOn → auth-service
-    ...
-
-  Facts (12):
-    • Uses FastAPI 0.100+ (confidence: 0.95)
-    • OAuth callback URL is /auth/callback (confidence: 0.90)
-    ...
-
-# JSON output (--json)
-{
-  "focus": "xm:entity/acme-api",
-  "token_budget": {"max": 4000, "used": 3847},
-  "nodes": [...],
-  "summary": "Repository with 12 facts, 5 dependencies, 3 artifacts"
-}
-```
-
 ### 4.14 Session Commands
 
 #### `xm session start`
@@ -2943,6 +2900,7 @@ invoke_gpt(f"--cap {gpt_cap}")
 | 0.7.0 | 2026-01-06 | Digital Services Team | Renamed from Meld to Cross Memory (xm); updated CLI tool name, URI namespace (xm:), environment variables (XM_*), and all references throughout |
 | 0.8.0 | 2026-01-06 | Digital Services Team | Added Section 8.5 Multi-Agent Isolation documenting invoker-mediated capability provisioning, per-agent capability boundaries, orchestration layer integration, and threat mitigations |
 | 0.9.0 | 2026-01-06 | Digital Services Team | Replaced `xm server` with embedded daemon architecture; daemon auto-starts on first CLI command; added `xm daemon`, `xm listen`, `xm listeners` commands; added daemon.toml configuration |
+| 0.10.0 | 2026-01-06 | Digital Services Team | Removed `xm query context` command; context construction is out of scope (single responsibility: storage, not LLM context engineering) |
 
 ---
 
