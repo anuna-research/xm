@@ -210,8 +210,29 @@
   "Display an alist in human-readable format."
   (for-each
    (lambda (pair)
-     (format #t "  ~a: ~a\n" (car pair) (cdr pair)))
+     (format #t "  ~a: ~a\n" (car pair) (format-value (cdr pair))))
    alist))
+
+(define (format-value val)
+  "Format a value for human-readable output."
+  (cond
+   ;; Null/empty list
+   ((null? val) "(none)")
+   ;; Boolean
+   ((eq? val #t) "true")
+   ((eq? val #f) "false")
+   ;; Nested alist (list of pairs with symbol/string keys)
+   ((and (list? val) (pair? val) (pair? (car val)))
+    (string-join
+     (map (lambda (p)
+            (format #f "~a=~a" (car p) (cdr p)))
+          val)
+     ", "))
+   ;; Simple list
+   ((list? val)
+    (string-join (map (lambda (x) (format #f "~a" x)) val) ", "))
+   ;; Everything else
+   (else (format #f "~a" val))))
 
 (define (format-node node)
   "Format a node for human-readable output."

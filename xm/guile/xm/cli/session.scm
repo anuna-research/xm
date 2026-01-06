@@ -22,6 +22,18 @@
             cmd-session-history))
 
 ;;; --------------------------------------------------------------------
+;;; Session Graph and URI Helpers
+;;; --------------------------------------------------------------------
+
+(define (session-graph-uri)
+  "Get the graph URI for storing sessions."
+  (xm-graph-uri "sessions"))
+
+(define (xm-uri local-name)
+  "Create a full URI in the xm namespace."
+  (string-append xm-ns local-name))
+
+;;; --------------------------------------------------------------------
 ;;; Session Command Dispatcher
 ;;; --------------------------------------------------------------------
 
@@ -61,7 +73,8 @@
                            (and (member (car opt) '("context" "c"))
                                 (cdr opt)))
                          opts))
-         (parent-id (assoc-ref opts "parent")))
+         (parent-id (assoc-ref opts "parent"))
+         (graph-uri (session-graph-uri)))
 
     ;; Validate required options
     (unless agent-id
@@ -71,27 +84,41 @@
                     global-opts)
       (exit 2))
 
-    ;; Create session
+    ;; Create session and persist to store
     (let* ((session-id (xm-session-uri (generate-uuid)))
-           (timestamp (current-iso-timestamp))
-           (result `((session_id . ,session-id)
-                     (agent . ,agent-id)
-                     (purpose . ,(or purpose ""))
-                     (started_at . ,timestamp)
-                     (context_nodes . ,context-nodes)
-                     (parent . ,parent-id))))
+           (timestamp (current-iso-timestamp)))
 
-      ;; In production: spawn session actor via registry
-      ;; (<- session-registry 'start agent-id purpose context-nodes parent-id)
+      ;; Store session as RDF triples
+      (store-insert-quad store session-id rdf:type prov:Activity #:graph graph-uri)
+      (store-insert-quad store session-id dcterms:created timestamp #:graph graph-uri)
+      (store-insert-quad store session-id (xm-uri "agent") agent-id #:graph graph-uri)
+      (store-insert-quad store session-id (xm-uri "active") "true" #:graph graph-uri)
+      (when purpose
+        (store-insert-quad store session-id (xm-uri "purpose") purpose #:graph graph-uri))
+      (when parent-id
+        (store-insert-quad store session-id (xm-uri "parent") (expand-uri parent-id) #:graph graph-uri))
 
-      (if (assoc-ref global-opts "json")
-          (output-result result global-opts)
-          (begin
-            (format #t "\nSession started: ~a\n" session-id)
-            (format #t "Agent: ~a\n" agent-id)
-            (when purpose (format #t "Purpose: ~a\n" purpose))
-            (format #t "Started: ~a\n" timestamp)
-            (format #t "\nExport SESSION_ID=~a\n" session-id))))))
+      ;; Link context nodes
+      (for-each
+       (lambda (ctx)
+         (store-insert-quad store session-id (xm-uri "context") (expand-uri ctx) #:graph graph-uri))
+       context-nodes)
+
+      (let ((result `((session_id . ,session-id)
+                      (agent . ,agent-id)
+                      (purpose . ,(or purpose ""))
+                      (started_at . ,timestamp)
+                      (context_nodes . ,context-nodes)
+                      (parent . ,parent-id))))
+
+        (if (assoc-ref global-opts "json")
+            (output-result result global-opts)
+            (begin
+              (format #t "\nSession started: ~a\n" session-id)
+              (format #t "Agent: ~a\n" agent-id)
+              (when purpose (format #t "Purpose: ~a\n" purpose))
+              (format #t "Started: ~a\n" timestamp)
+              (format #t "\nExport SESSION_ID=~a\n" session-id)))))))
 
 ;;; --------------------------------------------------------------------
 ;;; session end
@@ -104,35 +131,40 @@
    -s, --summary TEXT: Session summary"
 
   (let* ((positional (assoc-ref opts 'positional))
-         (session-id (and (pair? positional) (car positional)))
+         ;; Check positional args first, then fall back to global --session option
+         (session-id (or (and (pair? positional) (car positional))
+                         (assoc-ref global-opts "session")))
          (summary (or (assoc-ref opts "summary")
-                      (assoc-ref opts "s"))))
+                      (assoc-ref opts "s")))
+         (graph-uri (session-graph-uri)))
 
     (unless session-id
       (output-error "MISSING_SESSION_ID"
                     "Session ID is required"
-                    "Usage: xm session end <SESSION_ID>"
+                    "Usage: xm session end <SESSION_ID> or xm --session <ID> session end"
                     global-opts)
       (exit 2))
 
-    ;; In production: end session via registry
-    ;; (<- session-registry 'end session-id summary)
+    ;; Expand URI if prefixed
+    (let* ((full-session-id (expand-uri session-id))
+           (timestamp (current-iso-timestamp)))
 
-    (let* ((timestamp (current-iso-timestamp))
-           (result `((session_id . ,session-id)
-                     (ended_at . ,timestamp)
-                     (summary . ,summary)
-                     (duration_seconds . 3600)
-                     (discoveries . 5)
-                     (context_nodes . 3))))
+      ;; Update session in store - mark as inactive and add end time
+      (store-insert-quad store full-session-id (xm-uri "active") "false" #:graph graph-uri)
+      (store-insert-quad store full-session-id (xm-uri "endedAt") timestamp #:graph graph-uri)
+      (when summary
+        (store-insert-quad store full-session-id (xm-uri "summary") summary #:graph graph-uri))
 
-      (if (assoc-ref global-opts "json")
-          (output-result result global-opts)
-          (begin
-            (format #t "\nSession ended: ~a\n" session-id)
-            (format #t "Duration: ~a seconds\n" (assoc-ref result 'duration_seconds))
-            (format #t "Discoveries: ~a\n" (assoc-ref result 'discoveries))
-            (when summary (format #t "Summary: ~a\n" summary)))))))
+      (let ((result `((session_id . ,full-session-id)
+                      (ended_at . ,timestamp)
+                      (summary . ,summary))))
+
+        (if (assoc-ref global-opts "json")
+            (output-result result global-opts)
+            (begin
+              (format #t "\nSession ended: ~a\n" (compact-uri full-session-id))
+              (format #t "Ended at: ~a\n" timestamp)
+              (when summary (format #t "Summary: ~a\n" summary))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; session list
@@ -150,13 +182,18 @@
                            (assoc-ref opts "a")))
          (since-time (assoc-ref opts "since"))
          (active-only (assoc-ref opts "active-only"))
-         (limit (string->number (or (assoc-ref opts "limit") "20"))))
+         (limit (or (assoc-ref opts "limit") "20"))
+         (graph-uri (session-graph-uri)))
 
-    ;; In production: query session registry
-    ;; (<- session-registry 'list-sessions agent-filter since-time active-only)
-
-    ;; Placeholder results
-    (let ((sessions '()))
+    ;; Build SPARQL query to find sessions
+    (let* ((sparql (build-session-list-query agent-filter active-only limit graph-uri))
+           (json-result (catch #t
+                          (lambda () (store-query store sparql))
+                          (lambda (key . args)
+                            "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}")))
+           (parsed (json-string->scm json-result))
+           (bindings (get-sparql-bindings parsed))
+           (sessions (map parse-session-binding bindings)))
 
       (if (assoc-ref global-opts "json")
           (output-result `((sessions . ,sessions)
@@ -175,11 +212,52 @@
                 (for-each
                  (lambda (sess)
                    (format #t "  ~a  ~a  ~a  ~a\n"
-                           (assoc-ref sess 'session_id)
-                           (assoc-ref sess 'agent)
-                           (assoc-ref sess 'started_at)
-                           (if (assoc-ref sess 'active) "active" "ended")))
+                           (compact-uri (assoc-ref sess 'session_id))
+                           (or (assoc-ref sess 'agent) "unknown")
+                           (or (assoc-ref sess 'started_at) "")
+                           (if (equal? (assoc-ref sess 'active) "true") "active" "ended")))
                  sessions)))))))
+
+(define (build-session-list-query agent-filter active-only limit graph-uri)
+  "Build SPARQL query to list sessions."
+  (string-append
+   "SELECT ?session ?agent ?started ?active ?purpose\n"
+   (format #f "FROM <~a>\n" graph-uri)
+   "WHERE {\n"
+   "  ?session a <" prov:Activity "> .\n"
+   "  ?session <" (xm-uri "agent") "> ?agent .\n"
+   "  OPTIONAL { ?session <" dcterms:created "> ?started }\n"
+   "  OPTIONAL { ?session <" (xm-uri "active") "> ?active }\n"
+   "  OPTIONAL { ?session <" (xm-uri "purpose") "> ?purpose }\n"
+   (if agent-filter
+       (format #f "  FILTER(?agent = \"~a\")\n" agent-filter)
+       "")
+   (if active-only
+       (format #f "  FILTER(?active = \"true\")\n")
+       "")
+   "}\n"
+   "ORDER BY DESC(?started)\n"
+   (format #f "LIMIT ~a" limit)))
+
+(define (parse-session-binding binding)
+  "Parse a SPARQL binding into a session alist."
+  `((session_id . ,(get-binding-value binding "session"))
+    (agent . ,(get-binding-value binding "agent"))
+    (started_at . ,(get-binding-value binding "started"))
+    (active . ,(get-binding-value binding "active"))
+    (purpose . ,(get-binding-value binding "purpose"))))
+
+(define (get-binding-value binding var-name)
+  "Get the value of a variable from a SPARQL binding."
+  (let ((var-obj (assoc-ref binding var-name)))
+    (and var-obj (assoc-ref var-obj "value"))))
+
+(define (get-sparql-bindings json-obj)
+  "Extract bindings from SPARQL JSON results."
+  (let ((results (assoc-ref json-obj "results")))
+    (if results
+        (or (assoc-ref results "bindings") '())
+        '())))
 
 ;;; --------------------------------------------------------------------
 ;;; session resume
@@ -276,19 +354,7 @@
   (date->string (time-utc->date (current-time time-utc))
                 "~Y-~m-~dT~H:~M:~SZ"))
 
-(define (generate-uuid)
-  "Generate a simple UUID-like string."
-  (let* ((t (current-time time-utc))
-         (secs (time-second t))
-         (nsecs (time-nanosecond t))
-         (r1 (random (expt 2 32)))
-         (r2 (random (expt 2 32))))
-    (format #f "~8,'0x-~4,'0x-~4,'0x-~4,'0x-~12,'0x"
-            (logand secs #xffffffff)
-            (logand (ash nsecs -16) #xffff)
-            (logior #x4000 (logand (ash nsecs 0) #x0fff))
-            (logior #x8000 (logand r1 #x3fff))
-            (logand r2 #xffffffffffff))))
+;; generate-uuid is imported from (xm store)
 
 (define (filter-map proc lst)
   "Map PROC over LST, keeping only non-#f results."

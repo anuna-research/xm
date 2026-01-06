@@ -73,6 +73,15 @@
 ;;; Argument Parsing
 ;;; --------------------------------------------------------------------
 
+;; Global option names that should always go to global-opts regardless of position
+(define *global-option-names*
+  '("help" "h" "version" "debug" "d" "quiet" "q" "verbose" "v"
+    "json" "no-color" "no-input" "store" "session" "cap" "remote"))
+
+(define (global-option? name)
+  "Check if NAME is a global option."
+  (member name *global-option-names*))
+
 (define (parse-args args)
   "Parse command-line arguments into a structured result.
    Returns an alist with:
@@ -108,9 +117,10 @@
            ;; Long option: --name or --name=value
            ((string-prefix? "--" arg)
             (let-values (((name value rest*) (parse-long-option arg rest)))
-              (if in-global
+              ;; Global options go to global-opts regardless of position
+              (if (or in-global (global-option? name))
                   (loop rest* (cons (cons name value) global-opts)
-                        command subcommand cmd-opts positional #t)
+                        command subcommand cmd-opts positional in-global)
                   (loop rest* global-opts command subcommand
                         (cons (cons name value) cmd-opts) positional #f))))
 
@@ -119,11 +129,15 @@
                  (> (string-length arg) 1)
                  (not (string=? arg "-")))
             (let-values (((opts rest*) (parse-short-options arg rest)))
-              (if in-global
-                  (loop rest* (append (reverse opts) global-opts)
-                        command subcommand cmd-opts positional #t)
-                  (loop rest* global-opts command subcommand
-                        (append (reverse opts) cmd-opts) positional #f))))
+              ;; Check each option - global ones go to global-opts
+              (let-values (((global-from-opts cmd-from-opts)
+                            (partition-options opts)))
+                (loop rest*
+                      (append (reverse global-from-opts) global-opts)
+                      command subcommand
+                      (append (reverse cmd-from-opts) cmd-opts)
+                      positional
+                      in-global))))
 
            ;; Command/subcommand
            ((not command)
@@ -142,6 +156,17 @@
            (else
             (loop rest global-opts command subcommand cmd-opts
                   (cons arg positional) #f)))))))
+
+(define (partition-options opts)
+  "Partition options into global and command-specific.
+   Returns (values global-opts cmd-opts)."
+  (let loop ((opts opts) (global '()) (cmd '()))
+    (if (null? opts)
+        (values (reverse global) (reverse cmd))
+        (let ((opt (car opts)))
+          (if (global-option? (car opt))
+              (loop (cdr opts) (cons opt global) cmd)
+              (loop (cdr opts) global (cons opt cmd)))))))
 
 ;; Known flag options (take no value)
 (define *flag-options*

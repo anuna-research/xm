@@ -10,6 +10,7 @@
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
   #:use-module (ice-9 rdelim)
+  #:use-module (ice-9 ports)
   #:use-module (xm cli output)
   #:use-module (xm cli parser)
   #:use-module (xm vocabulary)
@@ -259,23 +260,29 @@
                      global-opts))
 
      ((not force)
-      ;; Interactive confirmation (unless --no-input)
-      (if (assoc-ref global-opts "no-input")
+      ;; Interactive confirmation (unless --no-input or non-TTY stdin)
+      (if (or (assoc-ref global-opts "no-input")
+              (not (isatty? (current-input-port))))
           (begin
             (output-error "CONFIRMATION_REQUIRED"
                           "Deletion requires confirmation"
-                          "Use --force to skip confirmation"
+                          "Use --force to skip confirmation in non-interactive mode"
                           global-opts)
             (exit 1))
           (begin
             (format #t "This will delete node ~a\n" node-id)
             (format #t "Type the node ID to confirm: ")
+            (force-output)
             (let ((input (read-line)))
-              (if (string=? input node-id)
-                  (do-delete-node node-id cascade global-opts store cap-ref)
-                  (begin
-                    (format (current-error-port) "Confirmation failed. Aborting.\n")
-                    (exit 1)))))))
+              (cond
+               ((eof-object? input)
+                (format (current-error-port) "\nAborted: no input received.\n")
+                (exit 1))
+               ((string=? input node-id)
+                (do-delete-node node-id cascade global-opts store cap-ref))
+               (else
+                (format (current-error-port) "Confirmation failed. Aborting.\n")
+                (exit 1)))))))
 
      (else
       (do-delete-node node-id cascade global-opts store cap-ref)))))

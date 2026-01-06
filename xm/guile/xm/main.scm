@@ -76,6 +76,122 @@ Documentation: https://xm.dev/docs
 ")
 
 ;;; --------------------------------------------------------------------
+;;; Command-Level Help
+;;; --------------------------------------------------------------------
+
+(define *command-help*
+  '((node . "
+xm node - Manage knowledge nodes
+
+Usage:
+  xm node <subcommand> [options]
+
+Subcommands:
+  create     Create a new node
+  get        Retrieve a node with properties and links
+  update     Update node properties
+  delete     Delete a node
+
+Examples:
+  xm node create -t entity -p name=my-api -p kind=service
+  xm node get xm:node/abc123
+  xm node update xm:node/abc123 -p status=active
+  xm node delete xm:node/abc123 --force
+")
+    (link . "
+xm link - Manage links between nodes
+
+Usage:
+  xm link <subcommand> [options]
+
+Subcommands:
+  create     Create a link between nodes
+  get        Retrieve link metadata
+  list       List links (filterable)
+  delete     Delete a link
+
+Examples:
+  xm link create --from xm:node/a --to xm:node/b --predicate skos:related
+  xm link list --from xm:node/abc123
+")
+    (query . "
+xm query - Query the knowledge graph
+
+Usage:
+  xm query <subcommand> [options]
+
+Subcommands:
+  sparql     Execute a SPARQL query
+  nodes      Search for nodes by criteria
+  backlinks  Find nodes linking TO a target (Org-roam style)
+  path       Find paths between nodes
+
+Examples:
+  xm query sparql \"SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10\"
+  xm query nodes --type entity
+  xm query backlinks xm:node/abc123
+  xm query path --from xm:node/a --to xm:node/b
+")
+    (session . "
+xm session - Manage agent sessions
+
+Usage:
+  xm session <subcommand> [options]
+
+Subcommands:
+  start      Start a new session
+  end        End an active session
+  list       List sessions
+  resume     Resume a previous session
+  history    View session activity
+
+Examples:
+  xm session start -a claude-code -p \"Debug auth bug\"
+  xm session list --agent claude-code --since 7d
+  xm session end <SESSION_ID> --summary \"Fixed the bug\"
+")
+    (cap . "
+xm cap - Manage capabilities
+
+Usage:
+  xm cap <subcommand> [options]
+
+Subcommands:
+  create     Create a capability
+  attenuate  Create weaker child capability
+  revoke     Revoke a capability
+  list       List capabilities
+  inspect    Show capability details
+
+Examples:
+  xm cap create --graphs xm:graph/public --permissions read,write
+  xm cap attenuate <CAP_REF> --remove-permission write
+")
+    (schema . "
+xm schema - Introspect schema
+
+Usage:
+  xm schema <subcommand> [options]
+
+Subcommands:
+  classes    List all classes with instance counts
+  predicates List all predicates with usage counts
+  describe   Describe a class or predicate
+
+Examples:
+  xm schema classes
+  xm schema predicates
+  xm schema describe prov:Entity
+")))
+
+(define (display-command-help command)
+  "Display help for a specific command."
+  (let ((help-text (assoc-ref *command-help* command)))
+    (if help-text
+        (display help-text)
+        (format #t "No help available for command: ~a\n" command))))
+
+;;; --------------------------------------------------------------------
 ;;; Store Initialization
 ;;; --------------------------------------------------------------------
 
@@ -105,12 +221,22 @@ Documentation: https://xm.dev/docs
       (format #t "xm version ~a\n" *version*)
       (exit 0))
 
-    ;; Handle --help or no command
-    (when (or (assoc-ref global-opts "help")
-              (assoc-ref global-opts "h")
-              (not command))
-      (display *help-text*)
-      (exit 0))
+    ;; Handle help requests
+    (let ((help-requested (or (assoc-ref global-opts "help")
+                              (assoc-ref global-opts "h"))))
+      (cond
+       ;; No command - show main help
+       ((not command)
+        (display *help-text*)
+        (exit 0))
+       ;; Command with --help and no subcommand - show command help
+       ((and help-requested command (not subcommand))
+        (display-command-help command)
+        (exit 0))
+       ;; Just --help without command - show main help
+       (help-requested
+        (display *help-text*)
+        (exit 0))))
 
     ;; Set up environment
     (let ((store-path (or (assoc-ref global-opts "store")

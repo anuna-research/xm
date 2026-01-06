@@ -102,26 +102,27 @@
 (define select-rx
   (make-regexp "\\bSELECT\\b" regexp/icase))
 
+(define where-rx
+  (make-regexp "\\bWHERE\\s*\\{" regexp/icase))
+
 (define (inject-from-clause sparql graph-uri)
-  "Inject FROM clause into SPARQL query after SELECT.
+  "Inject FROM clause into SPARQL query before WHERE clause.
    Only works for SELECT queries."
-  (let ((match (regexp-exec select-rx sparql)))
-    (if match
-        (let* ((select-end (match:end match))
-               (before (substring sparql 0 select-end))
-               (after (substring sparql select-end)))
-          ;; Find position after SELECT variables (before WHERE)
-          ;; Simple heuristic: inject after first newline following SELECT
-          (let ((newline-pos (string-index after #\newline)))
-            (if newline-pos
-                (string-append before
-                              (substring after 0 (+ newline-pos 1))
-                              (format #f "FROM <~a>\n" graph-uri)
-                              (substring after (+ newline-pos 1)))
-                ;; No newline, append after query variables
-                (string-append sparql (format #f "\nFROM <~a>" graph-uri)))))
-        ;; Not a SELECT query (CONSTRUCT, ASK, DESCRIBE), return as-is
-        sparql)))
+  (let ((select-match (regexp-exec select-rx sparql))
+        (where-match (regexp-exec where-rx sparql)))
+    (cond
+     ;; Both SELECT and WHERE found - inject FROM before WHERE
+     ((and select-match where-match)
+      (let ((where-start (match:start where-match)))
+        (string-append
+         (substring sparql 0 where-start)
+         (format #f "FROM <~a>\n" graph-uri)
+         (substring sparql where-start))))
+     ;; SELECT but no WHERE (unusual but possible) - append FROM at end
+     (select-match
+      (string-append sparql (format #f "\nFROM <~a>" graph-uri)))
+     ;; Not a SELECT query (CONSTRUCT, ASK, DESCRIBE) - return as-is
+     (else sparql))))
 
 (define (execute-sparql-query store sparql global-opts)
   "Execute SPARQL and return JSON results."
