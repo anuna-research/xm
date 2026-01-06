@@ -74,9 +74,8 @@
                      bindings)))
 
       (if (assoc-ref global-opts "json")
-          (output-result `((ok . #t)
-                           (data . ((graphs . ,(list (compact-uri graph-uri)))
-                                    (classes . ,classes))))
+          (output-result `((graphs . ,(list (compact-uri graph-uri)))
+                           (classes . ,classes))
                          global-opts)
           ;; Human-readable output
           (begin
@@ -139,9 +138,8 @@ LIMIT ~a" graph-uri limit))
                         bindings)))
 
       (if (assoc-ref global-opts "json")
-          (output-result `((ok . #t)
-                           (data . ((graphs . ,(list (compact-uri graph-uri)))
-                                    (predicates . ,predicates))))
+          (output-result `((graphs . ,(list (compact-uri graph-uri)))
+                           (predicates . ,predicates))
                          global-opts)
           ;; Human-readable output
           (begin

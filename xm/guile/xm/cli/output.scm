@@ -71,15 +71,22 @@
 
    ;; List (array or alist)
    ((list? obj)
-    (if (and (pair? obj) (pair? (car obj)) (not (list? (car obj))))
+    (if (alist? obj)
         ;; Alist -> object
+        ;; Handle both dotted pairs (a . b) and list pairs (a b c...) as alist entries
         (string-append
          "{"
          (string-join
-          (map (lambda (pair)
-                 (string-append (scm->json (car pair))
-                                ":"
-                                (scm->json (cdr pair))))
+          (map (lambda (entry)
+                 (let ((key (car entry))
+                       (value (if (and (pair? (cdr entry)) (null? (cddr entry)))
+                                  ;; (key value) form - take second element
+                                  (cadr entry)
+                                  ;; (key . value) or (key v1 v2...) - take cdr
+                                  (cdr entry))))
+                   (string-append (scm->json key)
+                                  ":"
+                                  (scm->json value))))
                obj)
           ",")
          "}")
@@ -306,6 +313,23 @@
 ;;; --------------------------------------------------------------------
 ;;; Utility Functions
 ;;; --------------------------------------------------------------------
+
+(define (alist? obj)
+  "Check if OBJ is an association list.
+   An alist is a list where each element is a pair with a symbol or string key."
+  (and (list? obj)
+       (pair? obj)
+       (every (lambda (entry)
+                (and (pair? entry)
+                     (or (symbol? (car entry))
+                         (string? (car entry)))))
+              obj)))
+
+(define (every pred lst)
+  "Return #t if PRED returns true for every element of LST."
+  (or (null? lst)
+      (and (pred (car lst))
+           (every pred (cdr lst)))))
 
 (define (string-prefix? prefix str)
   "Check if STR starts with PREFIX."

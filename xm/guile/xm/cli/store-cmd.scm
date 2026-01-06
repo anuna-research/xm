@@ -53,10 +53,9 @@
          (graph-count (length graphs)))
 
     (if (assoc-ref global-opts "json")
-        (output-result `((ok . #t)
-                         (data . ((compacted . #t)
-                                  (triple_count . ,triple-count)
-                                  (graph_count . ,graph-count))))
+        (output-result `((compacted . #t)
+                         (triple_count . ,triple-count)
+                         (graph_count . ,graph-count))
                        global-opts)
         (begin
           (format #t "Store compacted.\n")
@@ -113,11 +112,10 @@
           (display data port)))
 
       (if (assoc-ref global-opts "json")
-          (output-result `((ok . #t)
-                           (data . ((backed_up_to . ,output-file)
-                                    (triple_count . ,triple-count)
-                                    (format . ,format-opt)
-                                    (timestamp . ,timestamp))))
+          (output-result `((backed_up_to . ,output-file)
+                           (triple_count . ,triple-count)
+                           (format . ,format-opt)
+                           (timestamp . ,timestamp))
                          global-opts)
           (format #t "Backed up ~a triples to ~a\n" triple-count output-file)))))
 
@@ -182,10 +180,9 @@
 
         (let ((new-count (store-count store)))
           (if (assoc-ref global-opts "json")
-              (output-result `((ok . #t)
-                               (data . ((restored_from . ,from-file)
-                                        (triple_count . ,new-count)
-                                        (merged . ,(if merge #t #f)))))
+              (output-result `((restored_from . ,from-file)
+                               (triple_count . ,new-count)
+                               (merged . ,(if merge #t #f)))
                              global-opts)
               (begin
                 (if merge
@@ -221,9 +218,7 @@
                  (top_predicates . ,top-predicates))))
 
     (if (assoc-ref global-opts "json")
-        (output-result `((ok . #t)
-                         (data . ,info))
-                       global-opts)
+        (output-result info global-opts)
         ;; Human-readable output
         (display-store-info-human info))))
 

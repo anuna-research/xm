@@ -51,10 +51,16 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
 fi
 
 # Run xm via Guile
+# Filter out Guile compilation notes from stderr while preserving real errors
+# The notes (";;; note: source file...") are noise for users and pollute output
+filter_guile_notes() {
+    grep -v '^;;; note:' | grep -v ';;;       newer than compiled'
+}
+
 if [[ -n "$MAIN_SCRIPT" ]]; then
     # Development mode - load script directly
-    exec guile --no-auto-compile -e '(@ (xm main) main)' -s "$MAIN_SCRIPT" -- "$@"
+    guile --no-auto-compile -e '(@ (xm main) main)' -s "$MAIN_SCRIPT" -- "$@" 2> >(filter_guile_notes >&2)
 else
     # Installed mode - use module system
-    exec guile --no-auto-compile -e '(@ (xm main) main)' -c '(use-modules (xm main))' -- "$@"
+    guile --no-auto-compile -e '(@ (xm main) main)' -c '(use-modules (xm main))' -- "$@" 2> >(filter_guile_notes >&2)
 fi

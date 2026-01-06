@@ -4,69 +4,36 @@ Bugs discovered while testing xm CLI as an LLM agent.
 
 ## Critical Issues
 
-### 1. JSON output corrupted by Guile compilation notes
+### 1. JSON output corrupted by Guile compilation notes [FIXED]
 **Severity**: Critical
 **Commands affected**: All commands with `--json` flag
+**Status**: FIXED
 
-The `;;; note: source file...` Guile compilation warning is printed to stdout before JSON output, breaking machine parsing.
+The `;;; note: source file...` Guile compilation warning was printed to stdout before JSON output, breaking machine parsing.
 
-**Reproduction**:
-```bash
-./bin/xm --json session list
-```
+**Fix**: Modified `bin/xm` to filter Guile compilation notes from stderr using process substitution.
 
-**Output**:
-```
-;;; note: source file /Users/.../store.scm
-;;;       newer than compiled ...
-{"ok":true,"data":...}
-```
-
-**Expected**: Only valid JSON on stdout. Compilation notes should go to stderr or be suppressed.
-
-**Impact**: LLM agents cannot reliably parse JSON output. This is a blocking issue for automated use.
-
-### 2. JSON structure uses arrays instead of objects
+### 2. JSON structure uses arrays instead of objects [FIXED]
 **Severity**: High
 **Commands affected**: `session list`, possibly others
+**Status**: FIXED
 
-JSON output uses nested arrays with string keys instead of proper objects:
-```json
-["sessions", {...}, {...}]
-["filters", {"agent":false}]
-```
+JSON output was using nested arrays with string keys instead of proper objects.
 
-**Expected**: Proper object structure:
-```json
-{"sessions": [...], "filters": {...}}
-```
+**Fix**: Modified `output.scm` to properly detect alists and serialize them as JSON objects. Also fixed double-wrapping issue where commands were wrapping data with `{ok, data}` and then `output-result` was adding another wrapper.
 
 ---
 
 ## Medium Issues
 
-### 3. `graph list -v` doesn't show triple counts
+### 3. `graph list -v` doesn't show triple counts [FIXED]
 **Severity**: Medium
 **Command**: `xm graph list -v`
+**Status**: FIXED
 
-The verbose flag is supposed to show triple counts per graph, but output is identical to non-verbose mode.
+The verbose flag was not showing triple counts because `-v` is parsed as a global option, but the graph list command was only checking command-specific options.
 
-**Reproduction**:
-```bash
-./bin/xm graph list -v
-```
-
-**Output**:
-```
-Named Graphs:
-
-  xm:graph/sessions
-  xm:graph/public
-
-Total: 2 graphs
-```
-
-**Expected**: Triple counts should appear when `-v` is specified.
+**Fix**: Modified `graph.scm` to check both `opts` and `global-opts` for the verbose flag.
 
 ### 4. Node create output inconsistent newline
 **Severity**: Low

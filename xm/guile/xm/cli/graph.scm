@@ -46,8 +46,11 @@
    Options:
    -v, --verbose: Show triple counts for each graph"
 
+  ;; Note: -v/--verbose is a global option, so we need to check global-opts
   (let* ((verbose (or (assoc-ref opts "verbose")
-                      (assoc-ref opts "v")))
+                      (assoc-ref opts "v")
+                      (assoc-ref global-opts "verbose")
+                      (assoc-ref global-opts "v")))
          (graph-uris (store-list-graphs store))
          (graphs (if verbose
                      ;; Include counts for each graph
@@ -61,9 +64,8 @@
                           graph-uris))))
 
     (if (assoc-ref global-opts "json")
-        (output-result `((ok . #t)
-                         (data . ((graphs . ,graphs)
-                                  (count . ,(length graphs)))))
+        (output-result `((graphs . ,graphs)
+                         (count . ,(length graphs)))
                        global-opts)
         ;; Human-readable output
         (begin
@@ -123,9 +125,8 @@
             (store-create-graph store graph-uri)
 
             (if (assoc-ref global-opts "json")
-                (output-result `((ok . #t)
-                                 (data . ((graph . ,(compact-uri graph-uri))
-                                          (created . #t))))
+                (output-result `((graph . ,(compact-uri graph-uri))
+                                 (created . #t))
                                global-opts)
                 (format #t "Created graph: ~a\n" (compact-uri graph-uri))))))))
 
@@ -170,11 +171,10 @@
         (if dry-run
             ;; Dry run - just show what would be deleted
             (if (assoc-ref global-opts "json")
-                (output-result `((ok . #t)
-                                 (data . ((graph . ,(compact-uri graph-uri))
-                                          (triple_count . ,triple-count)
-                                          (dry_run . #t)
-                                          (would_delete . #t))))
+                (output-result `((graph . ,(compact-uri graph-uri))
+                                 (triple_count . ,triple-count)
+                                 (dry_run . #t)
+                                 (would_delete . #t))
                                global-opts)
                 (format #t "Would drop graph: ~a (~a triples)\n"
                         (compact-uri graph-uri) triple-count))
@@ -195,10 +195,9 @@
               (store-drop-graph store graph-uri)
 
               (if (assoc-ref global-opts "json")
-                  (output-result `((ok . #t)
-                                   (data . ((graph . ,(compact-uri graph-uri))
-                                            (triples_deleted . ,triple-count)
-                                            (dropped . #t))))
+                  (output-result `((graph . ,(compact-uri graph-uri))
+                                   (triples_deleted . ,triple-count)
+                                   (dropped . #t))
                                  global-opts)
                   (format #t "Dropped graph: ~a (~a triples deleted)\n"
                           (compact-uri graph-uri) triple-count))))))))
@@ -250,9 +249,7 @@
                       (top_predicates . ,top-predicates))))
 
         (if (assoc-ref global-opts "json")
-            (output-result `((ok . #t)
-                             (data . ,stats))
-                           global-opts)
+            (output-result stats global-opts)
             ;; Human-readable output
             (display-graph-stats-human stats))))))
 

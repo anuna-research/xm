@@ -81,14 +81,13 @@
         (let ((new-count (store-graph-count store graph-uri)))
 
           (if (assoc-ref global-opts "json")
-              (output-result `((ok . #t)
-                               (data . ((imported_from . ,file-path)
-                                        (graph . ,(compact-uri graph-uri))
-                                        (format . ,format-type)
-                                        (triples_added . ,(- new-count
-                                                              (if replace 0 existing-count)))
-                                        (total_triples . ,new-count)
-                                        (replaced . ,(if replace #t #f)))))
+              (output-result `((imported_from . ,file-path)
+                               (graph . ,(compact-uri graph-uri))
+                               (format . ,format-type)
+                               (triples_added . ,(- new-count
+                                                     (if replace 0 existing-count)))
+                               (total_triples . ,new-count)
+                               (replaced . ,(if replace #t #f)))
                              global-opts)
               (begin
                 (format #t "Imported from ~a\n" file-path)
@@ -152,25 +151,23 @@
               (lambda (port)
                 (display data port)))
             (if (assoc-ref global-opts "json")
-                (output-result `((ok . #t)
-                                 (data . ((exported_to . ,output-file)
-                                          (graph . ,(if graph-uri
-                                                        (compact-uri graph-uri)
-                                                        "all"))
-                                          (format . ,format-opt)
-                                          (triple_count . ,triple-count))))
+                (output-result `((exported_to . ,output-file)
+                                 (graph . ,(if graph-uri
+                                               (compact-uri graph-uri)
+                                               "all"))
+                                 (format . ,format-opt)
+                                 (triple_count . ,triple-count))
                                global-opts)
                 (format #t "Exported ~a triples to ~a\n" triple-count output-file)))
           ;; Output to stdout
           (if (assoc-ref global-opts "json")
-              ;; In JSON mode, wrap the data
-              (output-result `((ok . #t)
-                               (data . ((graph . ,(if graph-uri
-                                                      (compact-uri graph-uri)
-                                                      "all"))
-                                        (format . ,format-opt)
-                                        (triple_count . ,triple-count)
-                                        (content . ,data))))
+              ;; In JSON mode, include the RDF data
+              (output-result `((graph . ,(if graph-uri
+                                             (compact-uri graph-uri)
+                                             "all"))
+                               (format . ,format-opt)
+                               (triple_count . ,triple-count)
+                               (content . ,data))
                              global-opts)
               ;; Human mode: just output the RDF data
               (display data))))))
