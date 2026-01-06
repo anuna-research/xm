@@ -105,7 +105,7 @@ install: build ## Install xm to PREFIX (default: ~/.local)
 	 cp $(BUILD_DIR)/$(LIB_NAME).so $(PREFIX)/lib/ 2>/dev/null || true
 	@cp -r $(GUILE_MODULES)/xm/*.scm $(PREFIX)/share/guile/site/3.0/xm/
 	@cp -r $(GUILE_MODULES)/xm/cli/*.scm $(PREFIX)/share/guile/site/3.0/xm/cli/
-	@sed 's|XM_LIB_PATH_PLACEHOLDER|$(PREFIX)/lib|g' bin/xm > $(PREFIX)/bin/xm
+	@cp bin/xm $(PREFIX)/bin/xm
 	@chmod +x $(PREFIX)/bin/xm
 	@echo "Installed xm to $(PREFIX)"
 	@echo "Make sure $(PREFIX)/bin is in your PATH"
