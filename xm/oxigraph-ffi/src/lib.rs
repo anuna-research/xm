@@ -8,7 +8,7 @@ use oxigraph::io::{RdfFormat, RdfParser, RdfSerializer};
 use oxigraph::model::{GraphNameRef, NamedNodeRef, Quad, Term};
 use oxigraph::sparql::QueryResults;
 use oxigraph::store::Store;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::ptr;
 use uuid::Uuid;
 
@@ -92,6 +92,7 @@ pub unsafe extern "C" fn xm_store_close(store: *mut XmStore) {
 /// - `result_buf` must point to a buffer of at least `buf_len` bytes
 /// - Returns number of bytes written, or negative error code
 #[no_mangle]
+#[allow(deprecated)]
 pub unsafe extern "C" fn xm_store_query(
     store: *mut XmStore,
     sparql: *const c_char,
@@ -313,6 +314,7 @@ pub unsafe extern "C" fn xm_store_delete_quad(
 /// - `buf` must point to a buffer of at least `buf_len` bytes
 /// - Returns bytes written, or negative error code
 #[no_mangle]
+#[allow(deprecated)]
 pub unsafe extern "C" fn xm_store_dump_graph(
     store: *mut XmStore,
     graph: *const c_char,
