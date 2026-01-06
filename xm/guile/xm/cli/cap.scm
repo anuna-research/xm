@@ -327,30 +327,42 @@
                     global-opts)
       (exit 2))
 
-    ;; Parse and validate token
-    (let ((cap-info (parse-cap-token token)))
-      (if (not cap-info)
+    ;; Parse token to get original capability ID
+    (let ((original-id (parse-cap-token token)))
+      (if (not original-id)
           (begin
             (output-error "INVALID_TOKEN"
                           "Could not parse capability token"
                           "Ensure the token is complete and valid"
                           global-opts)
             (exit 1))
-          (let* ((cap-id (generate-cap-id))
-                 (now (time->iso8601 (current-time time-utc))))
-            (store-insert-capability store cap-id label
-                                     (assoc-ref cap-info 'graphs)
-                                     (assoc-ref cap-info 'permissions)
-                                     (assoc-ref cap-info 'expires)
-                                     now #f)
-            (if (assoc-ref global-opts "json")
-                (output-result `((id . ,cap-id)
-                                 (label . ,label)
-                                 (imported . #t))
-                               global-opts)
+          ;; Look up the original capability to get its properties
+          (let ((original-cap (query-capability-by-label-or-id store original-id)))
+            (if (not original-cap)
                 (begin
-                  (format #t "\nCapability imported: ~a\n" label)
-                  (format #t "ID: ~a\n" cap-id))))))))
+                  (output-error "CAP_NOT_FOUND"
+                                (format #f "Original capability not found: ~a" original-id)
+                                "The capability may have been revoked or deleted"
+                                global-opts)
+                  (exit 1))
+                (let* ((cap-id (generate-cap-id))
+                       (now (time->iso8601 (current-time time-utc)))
+                       (graphs (or (assoc-ref original-cap 'graphs) '()))
+                       (perms (or (assoc-ref original-cap 'permissions) '("read")))
+                       (expires (assoc-ref original-cap 'expires)))
+                  (store-insert-capability store cap-id label graphs perms expires now original-id)
+                  (if (assoc-ref global-opts "json")
+                      (output-result `((id . ,cap-id)
+                                       (label . ,label)
+                                       (graphs . ,graphs)
+                                       (permissions . ,perms)
+                                       (imported-from . ,original-id))
+                                     global-opts)
+                      (begin
+                        (format #t "\nCapability imported: ~a\n" label)
+                        (format #t "ID: ~a\n" cap-id)
+                        (format #t "Graphs: ~a\n" (string-join graphs ", "))
+                        (format #t "Permissions: ~a\n" (string-join perms ", ")))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions
@@ -584,9 +596,7 @@
   (string-append "xmcap:" (assoc-ref cap 'id)))
 
 (define (parse-cap-token token)
-  "Parse a capability token."
+  "Parse a capability token, returning the original capability ID or #f."
   (if (string-prefix? "xmcap:" token)
-      `((id . ,(substring token 6))
-        (graphs . ())
-        (permissions . ("read")))
+      (substring token 6)
       #f))
