@@ -101,7 +101,7 @@ Per SPEC-029 Section 5.20:
 - [x] `daemon restart` - stop+start
 - [x] `daemon status` - show running state
 - [x] Goblins runtime initialization with ^cap-registry actor
-- [~] OCapN tcp-tls netlayer (fibers works; netlayer has macOS accept() issue - uses local-only mode)
+- [x] OCapN UDS netlayer (Unix Domain Socket - macOS compatible)
 - [ ] `daemon listen` - add OCapN listener
 - [ ] `daemon listeners` - list active listeners
 
@@ -136,16 +136,17 @@ Per SPEC-029 Section 5.21:
 - [ ] `^event-journal` for append-only mutation log
 - [ ] `^subscription-registry` for pubsub cursors
 
-### OCapN Networking - IN PROGRESS
+### OCapN Networking - FUNCTIONAL
 
 - [x] OCapN module structure (`xm/ocapn.scm`)
 - [x] Sturdyref conversion utilities
 - [x] Cap export/import with sturdyref detection
 - [x] CapTP transport integration (fibers 1.4.0 works on macOS)
-- [~] tcp-tls netlayer (loads but has macOS accept() flag issue - Goblins upstream bug)
-- [x] mycapn actor for local capability registration
+- [x] UDS netlayer (`xm/ocapn/netlayer-uds.scm` - macOS compatible)
+- [x] mycapn actor for capability registration with UDS networking
+- [ ] tcp-tls netlayer (Goblins upstream has macOS accept() bug)
 - [ ] Remote gatekeeper access via `--remote` flag
-- [ ] Tor/Unix socket netlayers
+- [ ] Tor netlayer
 
 ### Event Journal & Store-and-Forward
 

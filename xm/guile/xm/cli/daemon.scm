@@ -217,7 +217,7 @@
                       (use-modules (goblins actor-lib methods))
                       (use-modules (goblins ocapn captp))
                       (use-modules (goblins ocapn ids))
-                      (use-modules (goblins ocapn netlayer tcp-tls))
+                      (use-modules (xm ocapn netlayer-uds))
                       #t)
                    (interaction-environment)))
            (lambda (key . args)
@@ -228,7 +228,7 @@
     (if (not goblins-loaded?)
         ;; Fall back to simple socket server without OCapN
         (run-simple-daemon-loop)
-        ;; Full Goblins/OCapN daemon with tcp-tls networking
+        ;; Full Goblins/OCapN daemon with UDS networking
         (run-goblins-daemon-loop))))
 
 (define (run-simple-daemon-loop)
@@ -250,15 +250,20 @@
 (define *daemon-netlayer* #f)
 
 (define (run-goblins-daemon-loop)
-  "Run daemon with Goblins actor support.
-   Uses local-only OCapN mode (tcp-tls netlayer has macOS accept() compatibility issues)."
-  (format #t "Initializing Goblins runtime...\n")
+  "Run daemon with Goblins actor support and UDS netlayer for OCapN networking."
+  (format #t "Initializing Goblins runtime with OCapN UDS netlayer...\n")
 
   ;; These are evaluated at runtime to avoid compile-time dependency
   (let* ((spawn-vat (eval 'spawn-vat (resolve-module '(goblins))))
          (call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
          (spawn (eval 'spawn (resolve-module '(goblins))))
-         (spawn-mycapn (eval 'spawn-mycapn (resolve-module '(goblins ocapn captp)))))
+         (spawn-mycapn (eval 'spawn-mycapn (resolve-module '(goblins ocapn captp))))
+         (^uds-netlayer (eval '^uds-netlayer (resolve-module '(xm ocapn netlayer-uds)))))
+
+    ;; Ensure OCapN socket directory exists
+    (let ((ocapn-dir (string-append (xm-data-dir) "/ocapn")))
+      (unless (file-exists? ocapn-dir)
+        (mkdir ocapn-dir #o755)))
 
     ;; Create the main vat
     (set! *daemon-vat* (spawn-vat))
@@ -271,13 +276,16 @@
         (set! *daemon-cap-registry* (spawn ^cap-registry))
         (format #t "Cap registry actor spawned\n")
 
-        ;; Create mycapn without netlayers (local-only mode)
-        ;; Note: tcp-tls netlayer has macOS compatibility issues with accept() flags
-        ;; TODO: Enable tcp-tls once Goblins fixes O_NONBLOCK handling for macOS
-        (set! *daemon-mycapn* (spawn-mycapn))
-        (format #t "OCapN mycapn ready (local-only mode)\n")))
+        ;; Create UDS netlayer for OCapN networking
+        (let ((ocapn-dir (string-append (xm-data-dir) "/ocapn")))
+          (set! *daemon-netlayer* (spawn ^uds-netlayer ocapn-dir #:peer-id "daemon"))
+          (format #t "OCapN UDS netlayer created at ~a/daemon.sock\n" ocapn-dir))
 
-    (format #t "Goblins runtime initialized\n"))
+        ;; Create mycapn with the UDS netlayer
+        (set! *daemon-mycapn* (spawn-mycapn *daemon-netlayer*))
+        (format #t "OCapN mycapn ready with UDS networking\n")))
+
+    (format #t "Goblins/OCapN runtime initialized\n"))
 
   ;; Set up Unix socket server for CLI communication
   (set! *daemon-running* #t)
