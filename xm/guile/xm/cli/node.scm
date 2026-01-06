@@ -160,29 +160,39 @@
            (json-result (store-query store sparql))
            (parsed (json-string->scm json-result))
            ;; Extract bindings
-           (bindings (get-sparql-bindings parsed))
-           ;; Build result structure
-           (node-type (find-binding-value bindings rdf:type "uri"))
-           (properties (extract-properties bindings)))
+           (bindings (get-sparql-bindings parsed)))
 
-      (let ((result `((node . ((id . ,full-uri)
-                               (type . ,(or (compact-uri node-type) "unknown"))
-                               (properties . ,properties)))
-                      (links . ())
-                      (backlinks . ()))))
+      ;; Check if node exists (has any bindings)
+      (if (null? bindings)
+          ;; Node not found
+          (begin
+            (output-error "NODE_NOT_FOUND"
+                          (format #f "Node not found: ~a" node-id)
+                          "The specified node does not exist in the store"
+                          global-opts)
+            (exit 1))
 
-        (if (assoc-ref global-opts "json")
-            (output-result result global-opts)
-            ;; Human-readable output
-            (begin
-              (format #t "\nNode: ~a\n" full-uri)
-              (format #t "Type: ~a\n" (or (compact-uri node-type) "unknown"))
-              (format #t "\nProperties:\n")
-              (if (null? properties)
-                  (format #t "  (none)\n")
-                  (for-each
-                   (lambda (p) (format #t "  ~a: ~a\n" (car p) (cdr p)))
-                   properties))))))))
+          ;; Node exists - build and output result
+          (let* ((node-type (find-binding-value bindings rdf:type "uri"))
+                 (properties (extract-properties bindings))
+                 (result `((node . ((id . ,full-uri)
+                                    (type . ,(or (compact-uri node-type) "unknown"))
+                                    (properties . ,properties)))
+                           (links . ())
+                           (backlinks . ()))))
+
+            (if (assoc-ref global-opts "json")
+                (output-result result global-opts)
+                ;; Human-readable output
+                (begin
+                  (format #t "\nNode: ~a\n" full-uri)
+                  (format #t "Type: ~a\n" (or (compact-uri node-type) "unknown"))
+                  (format #t "\nProperties:\n")
+                  (if (null? properties)
+                      (format #t "  (none)\n")
+                      (for-each
+                       (lambda (p) (format #t "  ~a: ~a\n" (car p) (cdr p)))
+                       properties)))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; node update
@@ -243,6 +253,7 @@
          (cascade (assoc-ref opts "cascade"))
          (force (or (assoc-ref opts "force")
                     (assoc-ref opts "f")))
+         (no-input (assoc-ref global-opts "no-input"))
          (dry-run (or (assoc-ref opts "dry-run")
                       (assoc-ref opts "n"))))
 
@@ -259,33 +270,33 @@
                        (cascade . ,(if cascade #t #f)))
                      global-opts))
 
-     ((not force)
-      ;; Interactive confirmation (unless --no-input or non-TTY stdin)
-      (if (or (assoc-ref global-opts "no-input")
-              (not (isatty? (current-input-port))))
-          (begin
-            (output-error "CONFIRMATION_REQUIRED"
-                          "Deletion requires confirmation"
-                          "Use --force to skip confirmation in non-interactive mode"
-                          global-opts)
-            (exit 1))
-          (begin
-            (format #t "This will delete node ~a\n" node-id)
-            (format #t "Type the node ID to confirm: ")
-            (force-output)
-            (let ((input (read-line)))
-              (cond
-               ((eof-object? input)
-                (format (current-error-port) "\nAborted: no input received.\n")
-                (exit 1))
-               ((string=? input node-id)
-                (do-delete-node node-id cascade global-opts store cap-ref))
-               (else
-                (format (current-error-port) "Confirmation failed. Aborting.\n")
-                (exit 1)))))))
+     ;; --force or --no-input: proceed without confirmation
+     ((or force no-input)
+      (do-delete-node node-id cascade global-opts store cap-ref))
 
+     ;; Interactive mode: prompt for confirmation
+     ((isatty? (current-input-port))
+      (format #t "This will delete node ~a\n" node-id)
+      (format #t "Type the node ID to confirm: ")
+      (force-output)
+      (let ((input (read-line)))
+        (cond
+         ((eof-object? input)
+          (format (current-error-port) "\nAborted: no input received.\n")
+          (exit 1))
+         ((string=? input node-id)
+          (do-delete-node node-id cascade global-opts store cap-ref))
+         (else
+          (format (current-error-port) "Confirmation failed. Aborting.\n")
+          (exit 1)))))
+
+     ;; Non-interactive without --force or --no-input: error
      (else
-      (do-delete-node node-id cascade global-opts store cap-ref)))))
+      (output-error "CONFIRMATION_REQUIRED"
+                    "Deletion requires confirmation"
+                    "Use --force or --no-input to skip confirmation in non-interactive mode"
+                    global-opts)
+      (exit 1)))))
 
 (define (do-delete-node node-id cascade global-opts store cap-ref)
   "Actually delete the node."

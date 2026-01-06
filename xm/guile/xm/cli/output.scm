@@ -59,6 +59,16 @@
    ((symbol? obj)
     (scm->json (symbol->string obj)))
 
+   ;; Dotted pair (non-list pair) -> single-key object
+   ;; This must come BEFORE the list? check since dotted pairs are pairs but not lists
+   ((and (pair? obj) (not (list? obj)))
+    (string-append
+     "{"
+     (scm->json (car obj))
+     ":"
+     (scm->json (cdr obj))
+     "}"))
+
    ;; List (array or alist)
    ((list? obj)
     (if (and (pair? obj) (pair? (car obj)) (not (list? (car obj))))

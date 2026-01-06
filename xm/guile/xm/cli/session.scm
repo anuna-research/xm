@@ -149,22 +149,62 @@
     (let* ((full-session-id (expand-uri session-id))
            (timestamp (current-iso-timestamp)))
 
-      ;; Update session in store - mark as inactive and add end time
-      (store-insert-quad store full-session-id (xm-uri "active") "false" #:graph graph-uri)
-      (store-insert-quad store full-session-id (xm-uri "endedAt") timestamp #:graph graph-uri)
-      (when summary
-        (store-insert-quad store full-session-id (xm-uri "summary") summary #:graph graph-uri))
+      ;; First check if session exists and is active
+      (let* ((check-sparql (format #f "SELECT ?active FROM <~a> WHERE { <~a> <~a> ?active }"
+                                    graph-uri full-session-id (xm-uri "active")))
+             (check-result (catch #t
+                             (lambda () (store-query store check-sparql))
+                             (lambda (key . args)
+                               "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}")))
+             (check-parsed (json-string->scm check-result))
+             (check-bindings (get-sparql-bindings check-parsed))
+             (current-active (and (pair? check-bindings)
+                                  (get-binding-value (car check-bindings) "active"))))
 
-      (let ((result `((session_id . ,full-session-id)
-                      (ended_at . ,timestamp)
-                      (summary . ,summary))))
+        (cond
+         ;; Session doesn't exist (no active value found)
+         ((not current-active)
+          (output-error "SESSION_NOT_FOUND"
+                        (format #f "Session not found: ~a" session-id)
+                        "The specified session does not exist"
+                        global-opts)
+          (exit 1))
 
-        (if (assoc-ref global-opts "json")
-            (output-result result global-opts)
-            (begin
-              (format #t "\nSession ended: ~a\n" (compact-uri full-session-id))
-              (format #t "Ended at: ~a\n" timestamp)
-              (when summary (format #t "Summary: ~a\n" summary))))))))
+         ;; Session already ended
+         ((equal? current-active "false")
+          (output-error "SESSION_ALREADY_ENDED"
+                        (format #f "Session already ended: ~a" session-id)
+                        "This session has already been ended"
+                        global-opts)
+          (exit 1))
+
+         ;; Session is active - end it
+         (else
+          ;; Delete old active value to avoid duplicates
+          (let ((delete-sparql (format #f "DELETE DATA { GRAPH <~a> { <~a> <~a> \"true\" } }"
+                                        graph-uri full-session-id (xm-uri "active"))))
+            (catch #t
+              (lambda () (store-update store delete-sparql))
+              (lambda (key . args)
+                ;; Ignore errors from delete - might not exist
+                #f)))
+
+          ;; Insert new active=false value
+          (store-insert-quad store full-session-id (xm-uri "active") "false" #:graph graph-uri)
+          (store-insert-quad store full-session-id (xm-uri "endedAt") timestamp #:graph graph-uri)
+          (when summary
+            (store-insert-quad store full-session-id (xm-uri "summary") summary #:graph graph-uri))
+
+          (let ((result `((session_id . ,full-session-id)
+                          (ended_at . ,timestamp)
+                          (summary . ,summary))))
+
+            (if (assoc-ref global-opts "json")
+                (output-result result global-opts)
+                (begin
+                  (format #t "\nSession ended: ~a\n" (compact-uri full-session-id))
+                  (format #t "Ended at: ~a\n" timestamp)
+                  (when summary (format #t "Summary: ~a\n" summary)))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; session list
@@ -219,21 +259,29 @@
                  sessions)))))))
 
 (define (build-session-list-query agent-filter active-only limit graph-uri)
-  "Build SPARQL query to list sessions."
+  "Build SPARQL query to list sessions.
+   Uses subquery to get the latest active status for each session to avoid duplicates."
   (string-append
-   "SELECT ?session ?agent ?started ?active ?purpose\n"
+   "SELECT DISTINCT ?session ?agent ?started ?active ?purpose\n"
    (format #f "FROM <~a>\n" graph-uri)
    "WHERE {\n"
    "  ?session a <" prov:Activity "> .\n"
    "  ?session <" (xm-uri "agent") "> ?agent .\n"
    "  OPTIONAL { ?session <" dcterms:created "> ?started }\n"
-   "  OPTIONAL { ?session <" (xm-uri "active") "> ?active }\n"
+   ;; For active status, prefer 'false' (ended) over 'true' (active) if both exist
+   "  OPTIONAL {\n"
+   "    ?session <" (xm-uri "active") "> ?active .\n"
+   "    FILTER NOT EXISTS {\n"
+   "      ?session <" (xm-uri "active") "> ?other_active .\n"
+   "      FILTER(?active = \"true\" && ?other_active = \"false\")\n"
+   "    }\n"
+   "  }\n"
    "  OPTIONAL { ?session <" (xm-uri "purpose") "> ?purpose }\n"
    (if agent-filter
        (format #f "  FILTER(?agent = \"~a\")\n" agent-filter)
        "")
    (if active-only
-       (format #f "  FILTER(?active = \"true\")\n")
+       "  FILTER(?active = \"true\")\n"
        "")
    "}\n"
    "ORDER BY DESC(?started)\n"

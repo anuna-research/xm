@@ -79,10 +79,11 @@
                     global-opts)
       (exit 2))
 
-    ;; Execute query
-    (let* ((safe-sparql (if allow-from
-                            sparql
-                            (inject-from-clause sparql graph-uri)))
+    ;; Execute query with standard prefixes and FROM clause
+    (let* ((prefixed-sparql (inject-standard-prefixes sparql))
+           (safe-sparql (if allow-from
+                            prefixed-sparql
+                            (inject-from-clause prefixed-sparql graph-uri)))
            (result (execute-sparql-query store safe-sparql global-opts)))
       (if (assoc-ref global-opts "json")
           ;; JSON output - SPARQL JSON Results format
@@ -98,6 +99,30 @@
 (define (query-has-from-clause? sparql)
   "Check if SPARQL query contains FROM or FROM NAMED clause."
   (regexp-exec from-clause-rx sparql))
+
+(define prefix-rx
+  (make-regexp "^\\s*PREFIX\\s" regexp/icase))
+
+(define (query-has-prefixes? sparql)
+  "Check if SPARQL query already has PREFIX declarations."
+  (regexp-exec prefix-rx sparql))
+
+(define *standard-prefixes*
+  "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX prov: <http://www.w3.org/ns/prov#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX xm: <https://xm.dev/ns/v1#>
+")
+
+(define (inject-standard-prefixes sparql)
+  "Inject standard PREFIX declarations into SPARQL query if not already present.
+   Only injects if the query doesn't already have PREFIX declarations."
+  (if (query-has-prefixes? sparql)
+      sparql
+      (string-append *standard-prefixes* sparql)))
 
 (define select-rx
   (make-regexp "\\bSELECT\\b" regexp/icase))
