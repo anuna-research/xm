@@ -18,7 +18,10 @@
             cmd-query-sparql
             cmd-query-nodes
             cmd-query-backlinks
-            cmd-query-path))
+            cmd-query-path
+            ;; Capability validation (for other modules)
+            lookup-capability
+            validate-capability-access))
 
 ;;; --------------------------------------------------------------------
 ;;; Query Command Dispatcher
@@ -45,6 +48,7 @@
 (define (cmd-query-sparql opts global-opts store cap-ref)
   "Execute a SPARQL query.
    Options:
+   --cap LABEL: Use capability for access control (required for protected graphs)
    --timeout DURATION: Query timeout
    -o, --output FORMAT: Output format for CONSTRUCT
    --allow-from: Allow FROM clauses in query (bypasses graph restriction)"
@@ -62,7 +66,7 @@
                             (assoc-ref opts "o")
                             "json"))
          (allow-from (assoc-ref opts "allow-from"))
-         (graph-uri (public-graph-uri)))
+         (cap-label (assoc-ref opts "cap")))
 
     (unless sparql
       (output-error "MISSING_QUERY"
@@ -71,6 +75,72 @@
                     global-opts)
       (exit 2))
 
+    ;; If --cap is provided, use capability-enforced access
+    (if cap-label
+        (execute-with-capability store sparql cap-label global-opts)
+        ;; Otherwise, use default public graph access
+        (execute-without-capability store sparql allow-from global-opts))))
+
+(define (execute-with-capability store sparql cap-label global-opts)
+  "Execute query using capability for access control."
+  ;; Look up the capability
+  (let ((cap (lookup-capability store cap-label)))
+    (if (not cap)
+        (begin
+          (output-error "CAP_NOT_FOUND"
+                        (format #f "Capability not found: ~a" cap-label)
+                        "Use 'xm cap list' to see available capabilities"
+                        global-opts)
+          (exit 1))
+        ;; Validate capability
+        (let ((graphs (or (assoc-ref cap 'graphs) '()))
+              (perms (or (assoc-ref cap 'permissions) '()))
+              (revoked (assoc-ref cap 'revoked)))
+
+          ;; Check if revoked
+          (when revoked
+            (output-error "CAP_REVOKED"
+                          (format #f "Capability has been revoked: ~a" cap-label)
+                          "Request a new capability from the owner"
+                          global-opts)
+            (exit 1))
+
+          ;; Check if capability grants read permission
+          (unless (member "read" perms)
+            (output-error "PERMISSION_DENIED"
+                          "Capability does not grant read permission"
+                          "This capability cannot be used for queries"
+                          global-opts)
+            (exit 1))
+
+          ;; Check if capability has any graphs
+          (when (null? graphs)
+            (output-error "NO_GRAPHS"
+                          "Capability does not grant access to any graphs"
+                          "The capability may be misconfigured"
+                          global-opts)
+            (exit 1))
+
+          ;; Build query with capability's allowed graphs
+          (let* ((prefixed-sparql (inject-standard-prefixes sparql))
+                 ;; Inject FROM clauses for all allowed graphs
+                 (safe-sparql (inject-capability-from-clauses prefixed-sparql graphs))
+                 (result (execute-sparql-query store safe-sparql global-opts)))
+
+            ;; Output success with capability info
+            (when (not (assoc-ref global-opts "json"))
+              (format #t "# Using capability: ~a\n" cap-label)
+              (format #t "# Graphs: ~a\n\n" (string-join graphs ", ")))
+
+            (if (assoc-ref global-opts "json")
+                (begin
+                  (display result)
+                  (newline))
+                (display-sparql-results result)))))))
+
+(define (execute-without-capability store sparql allow-from global-opts)
+  "Execute query without capability (public graph only)."
+  (let ((graph-uri (public-graph-uri)))
     ;; Security: Check for FROM clause injection
     (when (and (not allow-from) (query-has-from-clause? sparql))
       (output-error "FROM_CLAUSE_FORBIDDEN"
@@ -86,12 +156,32 @@
                             (inject-from-clause prefixed-sparql graph-uri)))
            (result (execute-sparql-query store safe-sparql global-opts)))
       (if (assoc-ref global-opts "json")
-          ;; JSON output - SPARQL JSON Results format
           (begin
             (display result)
             (newline))
-          ;; Human output - tabular format
           (display-sparql-results result)))))
+
+(define (inject-capability-from-clauses sparql graphs)
+  "Inject FROM clauses for all capability-allowed graphs."
+  (let ((where-match (regexp-exec where-rx sparql)))
+    (if where-match
+        (let ((where-start (match:start where-match))
+              (from-clauses (string-join
+                             (map (lambda (g)
+                                    (format #f "FROM <~a>" (expand-uri g)))
+                                  graphs)
+                             "\n")))
+          (string-append
+           (substring sparql 0 where-start)
+           from-clauses "\n"
+           (substring sparql where-start)))
+        ;; No WHERE clause found, append FROM at end
+        (string-append sparql "\n"
+                       (string-join
+                        (map (lambda (g)
+                               (format #f "FROM <~a>" (expand-uri g)))
+                             graphs)
+                        "\n")))))
 
 (define from-clause-rx
   (make-regexp "\\bFROM\\s+(NAMED\\s+)?<" regexp/icase))
@@ -503,3 +593,99 @@ LIMIT 1" graph-uri from to))
             ((#\return) (loop (cdr chars) (append '(#\r #\\) acc)))
             ((#\tab) (loop (cdr chars) (append '(#\t #\\) acc)))
             (else (loop (cdr chars) (cons c acc))))))))
+
+;;; --------------------------------------------------------------------
+;;; Capability Lookup and Validation
+;;; --------------------------------------------------------------------
+
+(define cap-graph-uri (xm-graph-uri "capabilities"))
+
+(define (lookup-capability store label-or-id)
+  "Look up a capability by label or ID. Returns capability alist or #f."
+  ;; Check if this looks like a URI
+  (let* ((is-uri (or (string-contains label-or-id "://")
+                     (string-prefix? "xm:" label-or-id)))
+         (query (string-append
+                 "PREFIX xm: <https://xm.dev/ns/v1#> "
+                 "SELECT ?id ?label ?revoked ?expires "
+                 "FROM <" cap-graph-uri "> "
+                 "WHERE { "
+                 "?id a xm:Capability . "
+                 "OPTIONAL { ?id xm:label ?label } "
+                 "OPTIONAL { ?id xm:revoked ?revoked } "
+                 "OPTIONAL { ?id xm:expires ?expires } "
+                 (if is-uri
+                     (format #f "FILTER(?id = <~a>) " (expand-uri label-or-id))
+                     (format #f "FILTER(?label = \"~a\") " label-or-id))
+                 "} LIMIT 1")))
+    (catch #t
+      (lambda ()
+        (let* ((json-result (store-query store query))
+               (parsed (json-string->scm json-result))
+               (bindings (get-sparql-bindings parsed)))
+          (and (pair? bindings)
+               (let ((row (car bindings)))
+                 (let ((cap-id (get-binding-value row "id")))
+                   `((id . ,cap-id)
+                     (label . ,(get-binding-value row "label"))
+                     (revoked . ,(equal? (get-binding-value row "revoked") "true"))
+                     (expires . ,(get-binding-value row "expires"))
+                     (graphs . ,(lookup-capability-graphs store cap-id))
+                     (permissions . ,(lookup-capability-permissions store cap-id))))))))
+      (lambda (key . args)
+        #f))))
+
+(define (lookup-capability-graphs store cap-id)
+  "Query graphs for a capability."
+  (let ((query (string-append
+                "PREFIX xm: <https://xm.dev/ns/v1#> "
+                "SELECT ?graph "
+                "FROM <" cap-graph-uri "> "
+                "WHERE { <" cap-id "> xm:grantsAccessTo ?graph }")))
+    (catch #t
+      (lambda ()
+        (let* ((json-result (store-query store query))
+               (parsed (json-string->scm json-result))
+               (bindings (get-sparql-bindings parsed)))
+          (map (lambda (row) (get-binding-value row "graph"))
+               bindings)))
+      (lambda (key . args) '()))))
+
+(define (lookup-capability-permissions store cap-id)
+  "Query permissions for a capability."
+  (let ((query (string-append
+                "PREFIX xm: <https://xm.dev/ns/v1#> "
+                "SELECT ?perm "
+                "FROM <" cap-graph-uri "> "
+                "WHERE { <" cap-id "> xm:hasPermission ?perm }")))
+    (catch #t
+      (lambda ()
+        (let* ((json-result (store-query store query))
+               (parsed (json-string->scm json-result))
+               (bindings (get-sparql-bindings parsed)))
+          (map (lambda (row) (get-binding-value row "perm"))
+               bindings)))
+      (lambda (key . args) '()))))
+
+(define (validate-capability-access store cap-label required-permission graphs-to-access)
+  "Validate that a capability grants access. Returns #t or raises error.
+   REQUIRED-PERMISSION: 'read, 'write, or 'admin
+   GRAPHS-TO-ACCESS: list of graph URIs to check"
+  (let ((cap (lookup-capability store cap-label)))
+    (cond
+     ((not cap)
+      (error 'capability-not-found cap-label))
+     ((assoc-ref cap 'revoked)
+      (error 'capability-revoked cap-label))
+     ((not (member (symbol->string required-permission)
+                   (or (assoc-ref cap 'permissions) '())))
+      (error 'permission-denied required-permission))
+     (else
+      ;; Check all requested graphs are in capability's allowed list
+      (let ((allowed (or (assoc-ref cap 'graphs) '())))
+        (for-each
+         (lambda (g)
+           (unless (member g allowed)
+             (error 'graph-not-allowed g)))
+         graphs-to-access))
+      #t))))
