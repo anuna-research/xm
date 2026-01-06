@@ -29,6 +29,7 @@ import sys
 import re
 import time
 import string
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import requests
@@ -1042,16 +1043,20 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
 def judge_answer(question: str, gold: str, generated: str) -> int:
     """Judge if answer is correct, with retry logic."""
 
-    prompt = f"""You are evaluating a QA system response.
+    # LLM Judge prompt (based on mem0 evaluation methodology)
+    # https://github.com/mem0ai/mem0/blob/main/evaluation/metrics/llm_judge.py
+    prompt = f"""Your task is to label an answer to a question as 'CORRECT' or 'WRONG'.
 
 Question: {question}
-Expected Answer: {gold}
+Gold Answer: {gold}
 Generated Answer: {generated}
 
-Be GENEROUS - same meaning/topic counts as correct.
-For dates, flexible matching is OK (May 7th = 7 May = May 2023).
+Be generous with grading - if the generated answer touches on the same topic and contains the correct factual information, count it as CORRECT even if it's longer or differently formatted.
 
-Respond with JSON: {{"reasoning": "brief explanation", "label": "CORRECT or WRONG"}}"""
+For time-related questions: different formats are OK (e.g., "May 7th" vs "7 May" vs "7 May 2023"), BUT the answer must reference the same date or time period. Different years (e.g., 2022 vs 2023) means WRONG.
+
+Just return the label CORRECT or WRONG in a json format with the key as 'label'.
+Example: {{"label": "CORRECT"}} or {{"label": "WRONG"}}"""
 
     max_retries = 5
     base_delay = 1
@@ -1172,11 +1177,14 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     qa_pairs = [qa for qa in conv["qa"] if qa["category"] != 5][:limit]
     # Results: (category, llm_judge_score, f1_score)
     results: List[Tuple[int, int, float]] = []
+    # Detailed results for logging
+    detailed_results: List[Dict] = []
 
     for i, qa in enumerate(qa_pairs, 1):
         question = qa["question"]
         gold = str(qa["answer"])
         category = qa["category"]
+        evidence = qa.get("evidence", [])
 
         q_display = question[:55] + "..." if len(question) > 55 else question
         print(f"\n[{i}/{len(qa_pairs)}] {q_display}")
@@ -1198,6 +1206,20 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         print(f"  F1: {f1:.3f} | Judge: {'✓ CORRECT' if llm_score == 1 else '✗ WRONG'}")
 
         results.append((category, llm_score, f1))
+
+        # Store detailed result for logging
+        detailed_results.append({
+            "index": i,
+            "question": question,
+            "expected": gold,
+            "generated": generated,
+            "category": category,
+            "category_name": CATEGORY_NAMES[category],
+            "evidence": evidence,
+            "f1_score": round(f1, 4),
+            "llm_judge": "CORRECT" if llm_score == 1 else "WRONG",
+            "llm_judge_score": llm_score
+        })
 
     # Print results
     print(f"\n{'='*70}")
@@ -1248,13 +1270,54 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     accuracy = correct / total * 100 if total > 0 else 0
     print(f"{'OVERALL':<15} {correct:>10} {total:>8} {accuracy:>9.1f}%\n")
 
+    # Get git hash for reproducibility
+    try:
+        git_hash = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5, cwd=XM_DIR
+        ).stdout.strip()
+    except Exception:
+        git_hash = "unknown"
+
+    # Save detailed results to log file
+    log_data = {
+        "timestamp": datetime.now().isoformat(),
+        "git_hash": git_hash,
+        "model": MODEL,
+        "api_provider": API_PROVIDER,
+        "limit": limit,
+        "conversation_id": conv["sample_id"],
+        "memory_stats": ingest_stats,
+        "summary": {
+            "total_questions": total,
+            "overall_f1": round(overall_f1, 4),
+            "judge_correct": correct,
+            "judge_accuracy": round(accuracy, 2),
+            "f1_by_category": {CATEGORY_NAMES[k]: round(v, 4) for k, v in category_f1s.items()}
+        },
+        "questions": detailed_results
+    }
+
+    # Write to results directory
+    results_dir = Path("eval/locomo/results")
+    results_dir.mkdir(exist_ok=True)
+
+    timestamp_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = results_dir / f"eval-{timestamp_str}.json"
+
+    with open(log_path, "w") as f:
+        json.dump(log_data, f, indent=2)
+
+    print(f"📝 Detailed results saved to: {log_path}\n")
+
     return {
         "memory_stats": ingest_stats,
         "total": total,
         "correct_judge": correct,
         "judge_accuracy": accuracy,
         "overall_f1": overall_f1,
-        "f1_by_category": category_f1s
+        "f1_by_category": category_f1s,
+        "log_path": str(log_path)
     }
 
 
