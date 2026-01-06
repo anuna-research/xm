@@ -33,9 +33,10 @@ fi
 # Use Homebrew Guile installation
 HOOT_PREFIX="${HOOT_PREFIX:-/opt/homebrew}"
 
-# Set Guile load path
+# Set Guile load path (fibers requires all three paths)
 export GUILE_LOAD_PATH="${GUILE_MODULES}:${HOOT_PREFIX}/share/guile/site/3.0:${GUILE_LOAD_PATH:-}"
 export GUILE_LOAD_COMPILED_PATH="${HOOT_PREFIX}/lib/guile/3.0/site-ccache:${GUILE_LOAD_COMPILED_PATH:-}"
+export GUILE_SYSTEM_EXTENSIONS_PATH="${HOOT_PREFIX}/lib/guile/3.0/extensions:${GUILE_SYSTEM_EXTENSIONS_PATH:-}"
 
 # Set library path for FFI
 export XM_LIB_PATH="${LIB_PATH}"

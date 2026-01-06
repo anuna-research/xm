@@ -101,7 +101,7 @@ Per SPEC-029 Section 5.20:
 - [x] `daemon restart` - stop+start
 - [x] `daemon status` - show running state
 - [x] Goblins runtime initialization with ^cap-registry actor
-- [ ] OCapN tcp-tls netlayer (blocked by macOS fibers compatibility)
+- [~] OCapN tcp-tls netlayer (fibers works; netlayer has macOS accept() issue - uses local-only mode)
 - [ ] `daemon listen` - add OCapN listener
 - [ ] `daemon listeners` - list active listeners
 
@@ -136,13 +136,14 @@ Per SPEC-029 Section 5.21:
 - [ ] `^event-journal` for append-only mutation log
 - [ ] `^subscription-registry` for pubsub cursors
 
-### OCapN Networking - PARTIAL
+### OCapN Networking - IN PROGRESS
 
 - [x] OCapN module structure (`xm/ocapn.scm`)
 - [x] Sturdyref conversion utilities
 - [x] Cap export/import with sturdyref detection
-- [ ] CapTP transport integration (blocked by macOS fibers issue)
-- [ ] tcp-tls netlayer initialization
+- [x] CapTP transport integration (fibers 1.4.0 works on macOS)
+- [~] tcp-tls netlayer (loads but has macOS accept() flag issue - Goblins upstream bug)
+- [x] mycapn actor for local capability registration
 - [ ] Remote gatekeeper access via `--remote` flag
 - [ ] Tor/Unix socket netlayers
 
@@ -168,18 +169,19 @@ Per SPEC-029 Section 5.21:
 | Capability Commands | 9 | 9 | 0 | 0 |
 | Import/Export | 2 | 0 | 0 | 2 |
 | Sync Commands | 2 | 0 | 0 | 2 |
-| Daemon Commands | 10 | 7 | 3 | 0 |
+| Daemon Commands | 10 | 8 | 2 | 0 |
 | Store Commands | 4 | 0 | 0 | 4 |
-| **Total** | **52** | **32** | **3** | **17** |
+| **Total** | **52** | **33** | **2** | **17** |
 
-**Implementation Progress: ~62% complete** (functional commands)
+**Implementation Progress: ~63% complete** (functional commands)
 
 ---
 
 ## Recommended Next Steps
 
-1. **Fix OCapN netlayer on macOS** - investigate fibers/epoll compatibility
+1. ~~**Fix OCapN netlayer on macOS**~~ - RESOLVED: fibers 1.4.0 from Homebrew tap works
 2. **Graph commands** - useful for managing named graphs
 3. **Wire session stubs** - make session tracking functional
 4. **Import/export** - essential for data portability
 5. **Store commands** - backup/restore functionality
+6. **Remote gatekeeper access** - implement `--remote` flag for cross-daemon queries

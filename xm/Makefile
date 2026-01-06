@@ -15,7 +15,10 @@ LIB_NAME := libxm_ffi
 GUILE_MODULES := guile
 
 # Environment for running Guile with xm modules
+# Note: fibers requires all three paths to work correctly on macOS
 export GUILE_LOAD_PATH := $(CURDIR)/guile:/opt/homebrew/share/guile/site/3.0
+export GUILE_LOAD_COMPILED_PATH := /opt/homebrew/lib/guile/3.0/site-ccache
+export GUILE_SYSTEM_EXTENSIONS_PATH := /opt/homebrew/lib/guile/3.0/extensions
 export XM_LIB_PATH := $(CURDIR)/$(BUILD_DIR)
 
 # Default target
