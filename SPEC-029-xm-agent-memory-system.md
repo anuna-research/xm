@@ -1810,7 +1810,218 @@ Found 1 path (2 hops):
 }
 ```
 
-### 5.14 Session Commands
+### 5.14 Schema Commands
+
+Schema introspection enables LLM agents to discover available classes, predicates, and graph structure at runtime—essential for formulating valid queries without hallucinating predicates.
+
+#### `xm schema classes`
+
+List all RDF classes (node types) in use within accessible graphs.
+
+```bash
+xm schema classes [--cap CAP_REF] [--graph URI] [--limit N]
+
+Flags:
+      --cap REF                Capability for graph access
+  -g, --graph URI              Limit to specific graph (repeatable)
+  -l, --limit N                Maximum results (default: 100)
+
+Examples:
+  # All classes in accessible graphs
+  xm schema classes --cap xm:cap/abc123
+
+  # Classes in a specific graph
+  xm schema classes --graph xm:graph/project/acme-api
+
+  # Public classes (no capability needed)
+  xm schema classes
+
+# Human output (default)
+Classes in 2 graphs:
+
+  prov:Entity              1,234 nodes
+  prov:Activity               56 nodes
+  prov:SoftwareAgent           3 nodes
+  xm:Framework                12 nodes
+  xm:Repository                8 nodes
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "graphs": ["xm:graph/public", "xm:graph/project/acme-api"],
+    "classes": [
+      {"uri": "prov:Entity", "count": 1234},
+      {"uri": "prov:Activity", "count": 56},
+      {"uri": "prov:SoftwareAgent", "count": 3},
+      {"uri": "xm:Framework", "count": 12},
+      {"uri": "xm:Repository", "count": 8}
+    ]
+  }
+}
+```
+
+#### `xm schema predicates`
+
+List all predicates in use with domain/range hints and usage statistics.
+
+```bash
+xm schema predicates [--cap CAP_REF] [--graph URI] [--limit N]
+
+Flags:
+      --cap REF                Capability for graph access
+  -g, --graph URI              Limit to specific graph (repeatable)
+  -l, --limit N                Maximum results (default: 100)
+
+Examples:
+  # All predicates in accessible graphs
+  xm schema predicates --cap xm:cap/abc123
+
+  # Predicates in a specific project
+  xm schema predicates --graph xm:graph/project/acme-api
+
+# Human output (default)
+Predicates in 2 graphs:
+
+  Predicate              Domain → Range              Count
+  ─────────────────────────────────────────────────────────
+  xm:uses                entity → entity                89
+  xm:dependsOn           entity → entity                34
+  prov:wasGeneratedBy    entity → activity           1,234
+  prov:wasAttributedTo   entity → agent                892
+  xm:confidence          entity → xsd:decimal        1,102
+  dcterms:created        any → xsd:dateTime          1,290
+  rdfs:label             any → xsd:string            1,305
+  skos:related           any → any                     156
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "graphs": ["xm:graph/public", "xm:graph/project/acme-api"],
+    "predicates": [
+      {"uri": "xm:uses", "domain": "entity", "range": "entity", "count": 89},
+      {"uri": "xm:dependsOn", "domain": "entity", "range": "entity", "count": 34},
+      {"uri": "prov:wasGeneratedBy", "domain": "entity", "range": "activity", "count": 1234},
+      {"uri": "xm:confidence", "domain": "entity", "range": "xsd:decimal", "count": 1102}
+    ]
+  }
+}
+```
+
+#### `xm schema describe`
+
+Combined schema summary optimized for LLM agent context injection.
+
+```bash
+xm schema describe [--cap CAP_REF] [--graph URI] [--format FORMAT]
+
+Flags:
+      --cap REF                Capability for graph access
+  -g, --graph URI              Limit to specific graph (repeatable)
+  -f, --format FORMAT          Output format: json (default), turtle, markdown
+
+Examples:
+  # Full schema for agent context
+  xm schema describe --cap xm:cap/abc123 --format json
+
+  # Export as Turtle (for RDFS/OWL tools)
+  xm schema describe --graph xm:graph/project/acme-api --format turtle
+
+  # Markdown summary (for documentation)
+  xm schema describe --format markdown
+
+# Human output (default)
+Schema Summary
+══════════════
+
+Graphs (2):
+  • xm:graph/public
+  • xm:graph/project/acme-api
+
+Statistics:
+  Nodes: 1,293
+  Links: 2,458
+
+Classes (5):
+  • prov:Entity (1,234)
+  • prov:Activity (56)
+  • prov:SoftwareAgent (3)
+  • xm:Framework (12)
+  • xm:Repository (8)
+
+Predicates (8):
+  • xm:uses (89)
+  • xm:dependsOn (34)
+  • prov:wasGeneratedBy (1,234)
+  • prov:wasAttributedTo (892)
+  • xm:confidence (1,102)
+  • dcterms:created (1,290)
+  • rdfs:label (1,305)
+  • skos:related (156)
+
+# JSON output (--json) - optimized for agent context injection
+{
+  "ok": true,
+  "data": {
+    "graphs": ["xm:graph/public", "xm:graph/project/acme-api"],
+    "statistics": {
+      "node_count": 1293,
+      "link_count": 2458
+    },
+    "classes": [
+      {"uri": "prov:Entity", "label": "Entity", "count": 1234},
+      {"uri": "prov:Activity", "label": "Activity", "count": 56}
+    ],
+    "predicates": [
+      {
+        "uri": "xm:uses",
+        "label": "uses",
+        "domain": "entity",
+        "range": "entity",
+        "count": 89,
+        "description": "Technology/framework usage relationship"
+      },
+      {
+        "uri": "prov:wasGeneratedBy",
+        "label": "was generated by",
+        "domain": "entity",
+        "range": "activity",
+        "count": 1234,
+        "description": "Links entity to the activity that created it"
+      }
+    ],
+    "namespaces": {
+      "xm": "https://xm.dev/ns/v1#",
+      "prov": "http://www.w3.org/ns/prov#",
+      "dcterms": "http://purl.org/dc/terms/",
+      "skos": "http://www.w3.org/2004/02/skos/core#",
+      "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
+    }
+  }
+}
+
+# Turtle output (--format turtle)
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xm: <https://xm.dev/ns/v1#> .
+
+xm:uses a rdf:Property ;
+    rdfs:label "uses" ;
+    rdfs:domain xm:Entity ;
+    rdfs:range xm:Entity ;
+    rdfs:comment "Technology/framework usage relationship" .
+```
+
+**Agent Usage Pattern**:
+
+```bash
+# Inject schema into agent context before querying
+SCHEMA=$(xm schema describe --cap "$CAP" --format json)
+
+# Agent now knows available predicates and can generate valid SPARQL
+```
+
+### 5.15 Session Commands
 
 #### `xm session start`
 
@@ -1934,7 +2145,7 @@ Examples:
 # Shows nodes/links created during session
 ```
 
-### 5.15 Capability Commands
+### 5.16 Capability Commands
 
 #### `xm cap create`
 
@@ -2049,7 +2260,7 @@ Examples:
   xm cap inspect xm:cap/xyz789
 ```
 
-### 5.16 Import/Export Commands
+### 5.17 Import/Export Commands
 
 #### `xm import`
 
@@ -2111,7 +2322,7 @@ Examples:
   xm export -f turtle --graph xm:graph/project/acme-api
 ```
 
-### 5.17 Synchronization Commands
+### 5.18 Synchronization Commands
 
 #### `xm subscribe`
 
@@ -2182,7 +2393,7 @@ Syncing with ocapn:tor:xyz123...
 }
 ```
 
-### 5.18 Daemon Commands
+### 5.19 Daemon Commands
 
 xm uses an **embedded daemon** architecture. The daemon auto-starts on first CLI invocation and runs in the background, managing the store, event journal, and OCapN listeners.
 
