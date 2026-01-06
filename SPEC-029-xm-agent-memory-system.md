@@ -1810,6 +1810,57 @@ Found 1 path (2 hops):
 }
 ```
 
+#### `xm update`
+
+Execute raw SPARQL UPDATE operations (INSERT/DELETE). For power users who need direct graph manipulation beyond node/link commands.
+
+```bash
+xm update [QUERY | -] [--cap CAP_REF] [--graph URI]
+
+Arguments:
+  QUERY                        SPARQL UPDATE string (or - for stdin)
+
+Flags:
+      --cap REF                Capability for graph access (requires write permission)
+  -g, --graph URI              Default graph for unscoped operations
+  -n, --dry-run                Parse and validate without executing
+      --timeout DURATION       Update timeout (default: 60s)
+
+Examples:
+  # Delete all deprecated flags
+  xm update --cap xm:cap/abc123 \
+    "DELETE { ?s xm:deprecated true } WHERE { ?s xm:deprecated true }"
+
+  # Insert with explicit graph
+  xm update --cap xm:cap/abc123 --graph xm:graph/project/acme-api \
+    "INSERT DATA { <xm:entity/new-service> a prov:Entity ; rdfs:label 'New Service' }"
+
+  # Complex update from file
+  cat migration.sparql | xm update --cap xm:cap/abc123 -
+
+  # Dry-run to validate syntax
+  xm update --dry-run "DELETE WHERE { ?s ?p ?o }"
+
+# Human output (default)
+Update executed successfully.
+  Triples inserted: 3
+  Triples deleted: 12
+  Graphs affected: 1
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "triples_inserted": 3,
+    "triples_deleted": 12,
+    "graphs_affected": ["xm:graph/project/acme-api"],
+    "duration_ms": 45
+  }
+}
+```
+
+**Security**: Updates are scoped to the capability's allowed graphs. Attempting to modify graphs outside the capability's scope results in a permission error.
+
 ### 5.14 Schema Commands
 
 Schema introspection enables LLM agents to discover available classes, predicates, and graph structure at runtime—essential for formulating valid queries without hallucinating predicates.
@@ -2021,7 +2072,221 @@ SCHEMA=$(xm schema describe --cap "$CAP" --format json)
 # Agent now knows available predicates and can generate valid SPARQL
 ```
 
-### 5.15 Session Commands
+### 5.15 Graph Commands
+
+Named graphs are the security boundaries in xm. These commands manage graphs directly.
+
+#### `xm graph list`
+
+List all named graphs accessible via capability.
+
+```bash
+xm graph list [--cap CAP_REF] [--verbose]
+
+Flags:
+      --cap REF                Capability for graph access
+  -v, --verbose                Include triple counts and metadata
+
+Examples:
+  # List public graphs (no capability)
+  xm graph list
+
+  # List all accessible graphs with stats
+  xm graph list --cap xm:cap/abc123 --verbose
+
+# Human output (default)
+Graphs accessible (3):
+
+  xm:graph/public
+  xm:graph/project/acme-api
+  xm:graph/session/abc123
+
+# Human output (--verbose)
+Graphs accessible (3):
+
+  xm:graph/public
+    Triples: 1,234
+    Created: 2026-01-01 00:00:00
+    Modified: 2026-01-06 09:30:00
+
+  xm:graph/project/acme-api
+    Triples: 5,678
+    Created: 2026-01-02 10:00:00
+    Modified: 2026-01-06 12:15:00
+
+  xm:graph/session/abc123
+    Triples: 89
+    Created: 2026-01-06 10:30:00
+    Modified: 2026-01-06 11:45:00
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "graphs": [
+      {
+        "uri": "xm:graph/public",
+        "triple_count": 1234,
+        "created_at": "2026-01-01T00:00:00Z",
+        "modified_at": "2026-01-06T09:30:00Z"
+      },
+      {
+        "uri": "xm:graph/project/acme-api",
+        "triple_count": 5678,
+        "created_at": "2026-01-02T10:00:00Z",
+        "modified_at": "2026-01-06T12:15:00Z"
+      }
+    ]
+  }
+}
+```
+
+#### `xm graph create`
+
+Create an empty named graph.
+
+```bash
+xm graph create GRAPH_URI [--cap CAP_REF]
+
+Arguments:
+  GRAPH_URI                    URI for the new graph
+
+Flags:
+      --cap REF                Capability with admin permission
+
+Examples:
+  # Create a new project graph
+  xm graph create xm:graph/project/new-project --cap xm:cap/admin
+
+# Human output (default)
+Created graph: xm:graph/project/new-project
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "uri": "xm:graph/project/new-project",
+    "created_at": "2026-01-06T14:00:00Z"
+  }
+}
+```
+
+#### `xm graph drop`
+
+Delete an entire named graph. **Dangerous operation.**
+
+```bash
+xm graph drop GRAPH_URI [--cap CAP_REF] [-f|--force] [-n|--dry-run]
+
+Arguments:
+  GRAPH_URI                    Graph to delete
+
+Flags:
+      --cap REF                Capability with admin permission
+  -f, --force                  Skip confirmation prompt
+  -n, --dry-run                Show what would be deleted without deleting
+
+Examples:
+  # Interactive confirmation (default)
+  xm graph drop xm:graph/project/old-project --cap xm:cap/admin
+
+  # Preview deletion
+  xm graph drop xm:graph/project/old-project --dry-run
+
+  # Skip confirmation
+  xm graph drop xm:graph/project/old-project --cap xm:cap/admin --force
+
+# Confirmation prompt (default)
+This will permanently delete graph xm:graph/project/old-project
+  Triples: 5,678
+  Nodes affected: 234
+  Links affected: 1,456
+
+Type the graph URI to confirm: xm:graph/project/old-project
+
+# Human output (after confirmation)
+Deleted graph: xm:graph/project/old-project
+  Triples removed: 5,678
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "uri": "xm:graph/project/old-project",
+    "triples_removed": 5678,
+    "deleted_at": "2026-01-06T14:30:00Z"
+  }
+}
+```
+
+#### `xm graph stats`
+
+Detailed statistics for a specific graph.
+
+```bash
+xm graph stats GRAPH_URI [--cap CAP_REF]
+
+Arguments:
+  GRAPH_URI                    Graph to analyze
+
+Flags:
+      --cap REF                Capability for graph access
+
+Examples:
+  xm graph stats xm:graph/project/acme-api --cap xm:cap/abc123
+
+# Human output (default)
+Graph: xm:graph/project/acme-api
+
+Statistics:
+  Triples: 5,678
+  Subjects: 234
+  Predicates: 18
+  Objects: 1,892
+
+Top Classes:
+  prov:Entity          189 nodes
+  prov:Activity         23 nodes
+  xm:Repository         12 nodes
+
+Top Predicates:
+  rdfs:label           234 uses
+  dcterms:created      234 uses
+  xm:uses               89 uses
+  prov:wasGeneratedBy   67 uses
+
+Timeline:
+  Created: 2026-01-02 10:00:00
+  Modified: 2026-01-06 12:15:00
+  Size on disk: 2.3 MB
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "uri": "xm:graph/project/acme-api",
+    "statistics": {
+      "triple_count": 5678,
+      "subject_count": 234,
+      "predicate_count": 18,
+      "object_count": 1892
+    },
+    "top_classes": [
+      {"uri": "prov:Entity", "count": 189},
+      {"uri": "prov:Activity", "count": 23}
+    ],
+    "top_predicates": [
+      {"uri": "rdfs:label", "count": 234},
+      {"uri": "dcterms:created", "count": 234}
+    ],
+    "created_at": "2026-01-02T10:00:00Z",
+    "modified_at": "2026-01-06T12:15:00Z",
+    "size_bytes": 2411724
+  }
+}
+```
+
+### 5.16 Session Commands
 
 #### `xm session start`
 
@@ -2145,7 +2410,7 @@ Examples:
 # Shows nodes/links created during session
 ```
 
-### 5.16 Capability Commands
+### 5.17 Capability Commands
 
 #### `xm cap create`
 
@@ -2260,7 +2525,7 @@ Examples:
   xm cap inspect xm:cap/xyz789
 ```
 
-### 5.17 Import/Export Commands
+### 5.18 Import/Export Commands
 
 #### `xm import`
 
@@ -2322,7 +2587,7 @@ Examples:
   xm export -f turtle --graph xm:graph/project/acme-api
 ```
 
-### 5.18 Synchronization Commands
+### 5.19 Synchronization Commands
 
 #### `xm subscribe`
 
@@ -2393,7 +2658,7 @@ Syncing with ocapn:tor:xyz123...
 }
 ```
 
-### 5.19 Daemon Commands
+### 5.20 Daemon Commands
 
 xm uses an **embedded daemon** architecture. The daemon auto-starts on first CLI invocation and runs in the background, managing the store, event journal, and OCapN listeners.
 
@@ -2562,6 +2827,246 @@ persistent = true      # Reuse same .onion address across restarts
 enabled = false
 port = 8470
 bind = "0.0.0.0"      # Use "127.0.0.1" for local-only
+```
+
+### 5.21 Store Commands
+
+Administrative commands for managing the Oxigraph store.
+
+#### `xm store stats`
+
+Display store-wide statistics.
+
+```bash
+xm store stats [--verbose]
+
+Flags:
+  -v, --verbose                Include detailed breakdowns
+
+Examples:
+  xm store stats
+
+# Human output (default)
+Store Statistics
+════════════════
+
+Location: ~/.local/share/xm/oxigraph
+Oxigraph Version: 0.4.0
+
+Summary:
+  Total triples: 45,678
+  Named graphs: 12
+  Size on disk: 128 MB
+
+# Human output (--verbose)
+Store Statistics
+════════════════
+
+Location: ~/.local/share/xm/oxigraph
+Oxigraph Version: 0.4.0
+
+Summary:
+  Total triples: 45,678
+  Named graphs: 12
+  Size on disk: 128 MB
+
+Graphs by size:
+  xm:graph/project/acme-api      15,234 triples (33%)
+  xm:graph/project/web-frontend  12,456 triples (27%)
+  xm:graph/public                 8,901 triples (19%)
+  ...
+
+Index sizes:
+  SPO: 45 MB
+  POS: 38 MB
+  OSP: 35 MB
+  GSPO: 10 MB
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "location": "~/.local/share/xm/oxigraph",
+    "oxigraph_version": "0.4.0",
+    "total_triples": 45678,
+    "graph_count": 12,
+    "size_bytes": 134217728,
+    "graphs": [
+      {"uri": "xm:graph/project/acme-api", "triple_count": 15234},
+      {"uri": "xm:graph/project/web-frontend", "triple_count": 12456}
+    ]
+  }
+}
+```
+
+#### `xm store backup`
+
+Create a backup of the entire store. **Recommended before major operations.**
+
+```bash
+xm store backup --output PATH [--format FORMAT]
+
+Flags:
+  -o, --output PATH            Backup file path (required)
+  -f, --format FORMAT          Backup format: archive (default), nquads
+      --compress               Compress with gzip (default: true)
+
+Examples:
+  # Full backup (recommended)
+  xm store backup --output ./backups/xm-2026-01-06.tar.gz
+
+  # Export as N-Quads (portable RDF format)
+  xm store backup --output ./backups/xm-2026-01-06.nq --format nquads
+
+  # Uncompressed backup
+  xm store backup --output ./backups/xm-backup.tar --compress=false
+
+# Human output (default)
+Backup created successfully.
+  Output: ./backups/xm-2026-01-06.tar.gz
+  Size: 45 MB
+  Triples: 45,678
+  Graphs: 12
+  Duration: 12s
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "output_path": "./backups/xm-2026-01-06.tar.gz",
+    "size_bytes": 47185920,
+    "triple_count": 45678,
+    "graph_count": 12,
+    "duration_ms": 12340,
+    "checksum": "sha256:abc123..."
+  }
+}
+```
+
+**Backup contents** (archive format):
+```
+xm-backup.tar.gz/
+├── manifest.json          # Backup metadata, version info
+├── oxigraph/              # RocksDB snapshot
+│   └── (RocksDB files)
+├── goblins/               # Capability and session state
+│   ├── capabilities.bloblin
+│   ├── sessions.bloblin
+│   └── audit.bloblin
+└── config.scm             # User configuration
+```
+
+#### `xm store restore`
+
+Restore store from a backup. **Dangerous operation — overwrites current store.**
+
+```bash
+xm store restore --input PATH [-f|--force] [-n|--dry-run]
+
+Flags:
+  -i, --input PATH             Backup file path (required)
+  -f, --force                  Skip confirmation prompt
+  -n, --dry-run                Validate backup without restoring
+
+Examples:
+  # Interactive restore (default)
+  xm store restore --input ./backups/xm-2026-01-06.tar.gz
+
+  # Validate backup first
+  xm store restore --input ./backups/xm-2026-01-06.tar.gz --dry-run
+
+  # Skip confirmation (scripting)
+  xm store restore --input ./backups/xm-2026-01-06.tar.gz --force
+
+# Confirmation prompt (default)
+This will OVERWRITE your current store with the backup.
+
+Current store:
+  Triples: 48,000
+  Graphs: 14
+  Last modified: 2026-01-06 15:30:00
+
+Backup contents:
+  Triples: 45,678
+  Graphs: 12
+  Created: 2026-01-06 10:00:00
+
+Type 'restore' to confirm: restore
+
+# Human output (after confirmation)
+Restore completed successfully.
+  Source: ./backups/xm-2026-01-06.tar.gz
+  Triples restored: 45,678
+  Graphs restored: 12
+  Duration: 18s
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "source_path": "./backups/xm-2026-01-06.tar.gz",
+    "triple_count": 45678,
+    "graph_count": 12,
+    "duration_ms": 18500
+  }
+}
+```
+
+#### `xm store check`
+
+Verify store integrity.
+
+```bash
+xm store check [--repair]
+
+Flags:
+      --repair                 Attempt to repair inconsistencies (requires admin)
+
+Examples:
+  # Check integrity
+  xm store check
+
+  # Check and repair
+  xm store check --repair
+
+# Human output (default)
+Store Integrity Check
+═════════════════════
+
+Checking RocksDB consistency... OK
+Checking index integrity... OK
+Checking graph references... OK
+Validating capability store... OK
+
+Result: Store is healthy
+
+# Human output (with issues)
+Store Integrity Check
+═════════════════════
+
+Checking RocksDB consistency... OK
+Checking index integrity... WARNING
+  - 3 orphaned index entries found
+Checking graph references... OK
+Validating capability store... OK
+
+Result: Minor issues found
+  Run 'xm store check --repair' to fix automatically
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "healthy": true,
+    "checks": [
+      {"name": "rocksdb_consistency", "status": "ok"},
+      {"name": "index_integrity", "status": "ok"},
+      {"name": "graph_references", "status": "ok"},
+      {"name": "capability_store", "status": "ok"}
+    ],
+    "issues": []
+  }
+}
 ```
 
 ---
