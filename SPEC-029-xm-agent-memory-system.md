@@ -4,7 +4,7 @@
 |---|---|
 | Document ID | SPEC-029 |
 | Title | Cross Memory (xm): Linked Memory for LLM Agents |
-| Version | 0.10.0 |
+| Version | 0.11.0 |
 | Status | Draft |
 | Created | 2026-01-06 |
 | Last Updated | 2026-01-06 |
@@ -1504,6 +1504,92 @@ Examples:
   xm link delete -s xm:entity/web-frontend -p xm:dependsOn -t xm:entity/auth-service
 ```
 
+#### `xm link get`
+
+Retrieve a link with its metadata.
+
+```bash
+xm link get LINK_ID
+
+Arguments:
+  LINK_ID                      Link URI to retrieve
+
+Examples:
+  xm link get xm:link/abc123
+
+# Human output (default)
+Link: xm:link/abc123
+  Source: xm:entity/acme-api
+  Predicate: xm:uses
+  Target: xm:entity/fastapi
+
+  Properties:
+    reason: Primary web framework
+
+  Provenance:
+    Agent: claude-code
+    Confidence: 0.95
+    Created: 2026-01-06 09:00:00
+
+# JSON output (--json)
+{
+  "ok": true,
+  "data": {
+    "id": "xm:link/abc123",
+    "source": "xm:entity/acme-api",
+    "predicate": "xm:uses",
+    "target": "xm:entity/fastapi",
+    "properties": {"reason": "Primary web framework"},
+    "provenance": {
+      "agent": "claude-code",
+      "confidence": 0.95,
+      "created_at": "2026-01-06T09:00:00Z"
+    }
+  }
+}
+```
+
+#### `xm link list`
+
+List links, optionally filtered by node or predicate.
+
+```bash
+xm link list [--node NODE_ID] [--predicate PRED] [--direction DIR] [--limit N]
+
+Flags:
+      --node NODE_ID           Filter by source or target node
+  -p, --predicate PRED         Filter by predicate
+      --direction DIR          Filter direction when --node specified: outgoing, incoming, both (default: both)
+  -l, --limit N                Maximum results (default: 100)
+
+Examples:
+  # All links from/to a node
+  xm link list --node xm:entity/acme-api
+
+  # Only outgoing links
+  xm link list --node xm:entity/acme-api --direction outgoing
+
+  # All links with specific predicate
+  xm link list --predicate xm:uses
+
+  # Combined filters
+  xm link list --node xm:entity/acme-api --predicate xm:dependsOn --direction outgoing
+
+# Human output (default)
+Found 5 links:
+
+  xm:link/abc123
+    xm:entity/acme-api → xm:uses → xm:entity/fastapi
+
+  xm:link/def456
+    xm:entity/acme-api → xm:dependsOn → xm:entity/auth-service
+  ...
+
+# JSON output (--json) - NDJSON for streaming
+{"id": "xm:link/abc123", "source": "xm:entity/acme-api", "predicate": "xm:uses", "target": "xm:entity/fastapi"}
+{"id": "xm:link/def456", "source": "xm:entity/acme-api", "predicate": "xm:dependsOn", "target": "xm:entity/auth-service"}
+```
+
 ### 4.13 Query Commands
 
 #### `xm query sparql`
@@ -2673,7 +2759,7 @@ Goblins provides transactional semantics:
 - [ ] CLI framework (Guile script or compiled binary)
 - [ ] `xm query sparql` with automatic scoping
 - [ ] `xm node create|get|update|delete` (convenience wrappers)
-- [ ] `xm link create|delete`
+- [ ] `xm link create|get|list|delete`
 - [ ] JSON output envelope with metadata
 - [ ] NDJSON streaming for large results
 - [ ] `--remote` flag for OCapN connection to remote xm daemon
@@ -2901,6 +2987,7 @@ invoke_gpt(f"--cap {gpt_cap}")
 | 0.8.0 | 2026-01-06 | Digital Services Team | Added Section 8.5 Multi-Agent Isolation documenting invoker-mediated capability provisioning, per-agent capability boundaries, orchestration layer integration, and threat mitigations |
 | 0.9.0 | 2026-01-06 | Digital Services Team | Replaced `xm server` with embedded daemon architecture; daemon auto-starts on first CLI command; added `xm daemon`, `xm listen`, `xm listeners` commands; added daemon.toml configuration |
 | 0.10.0 | 2026-01-06 | Digital Services Team | Removed `xm query context` command; context construction is out of scope (single responsibility: storage, not LLM context engineering) |
+| 0.11.0 | 2026-01-06 | Digital Services Team | Added `xm link get` and `xm link list` commands for link discoverability |
 
 ---
 
