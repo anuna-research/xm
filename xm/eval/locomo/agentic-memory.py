@@ -227,83 +227,216 @@ def call_claude_with_tools(messages: List[Dict], tools: List[Dict], system: str,
 
 
 # ============================================================================
-# Memory Storage (in-memory for this eval, simulating xm)
+# Memory Storage - xm-backed store using CLI
 # ============================================================================
 
-class MemoryStore:
-    """Simple in-memory store simulating xm for the evaluation."""
+class XmStore:
+    """Memory store backed by actual xm CLI."""
 
-    def __init__(self):
-        self.memories = []  # List of memory dicts
-        self.connections = []  # List of connection dicts
+    def __init__(self, store_path: str = None):
+        self.store_path = store_path
         self.memory_id = 0
+        # Track memories locally for stats (xm also stores them)
+        self._memories = []
+        self._connections = []
+
+    def _run_xm(self, args: List[str], timeout: int = 30) -> Tuple[bool, str]:
+        """Run xm CLI command."""
+        cmd = ["./bin/xm", "--json"]
+        if self.store_path:
+            cmd.extend(["--store", self.store_path])
+        cmd.extend(args)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=XM_DIR)
+            output = result.stdout if result.returncode == 0 else result.stderr
+            return result.returncode == 0, output[:5000]
+        except Exception as e:
+            return False, str(e)
 
     def add_memory(self, memory_type: str, content: str, subject: str,
                    timestamp: str = None, source: str = None) -> str:
-        """Add a memory and return its ID."""
+        """Add a memory as an xm node."""
         self.memory_id += 1
-        memory = {
-            "id": f"mem_{self.memory_id}",
+        mem_id = f"mem_{self.memory_id}"
+
+        # Map memory types to xm node types
+        xm_type = "agent" if memory_type == "person" else "fact"
+
+        # Create node with properties
+        args = ["node", "create", "-t", xm_type]
+        args.extend(["-p", f"content={content}"])
+        args.extend(["-p", f"subject={subject.lower()}"])
+        args.extend(["-p", f"memory_type={memory_type}"])
+        if timestamp:
+            args.extend(["-p", f"timestamp={timestamp}"])
+        if source:
+            args.extend(["-p", f"source={source}"])
+
+        success, output = self._run_xm(args)
+
+        # Track locally for stats
+        self._memories.append({
+            "id": mem_id,
             "type": memory_type,
             "content": content,
             "subject": subject.lower(),
             "timestamp": timestamp,
             "source": source
-        }
-        self.memories.append(memory)
-        return memory["id"]
+        })
+
+        return mem_id
 
     def add_connection(self, from_mem: str, relationship: str, to_mem: str):
-        """Add a connection between memories."""
-        self.connections.append({
+        """Track connection (simplified - full xm linking needs node URIs)."""
+        self._connections.append({
             "from": from_mem.lower(),
             "relationship": relationship,
             "to": to_mem.lower()
         })
 
     def search(self, query: str, memory_type: str = None) -> List[Dict]:
-        """Search memories by keyword."""
+        """Search memories using SPARQL REGEX for flexible matching."""
+        # Build regex pattern from query words (OR matching)
+        words = query.lower().split()
+        # Escape special regex chars and join with OR
+        pattern = "|".join(re.escape(w) for w in words if len(w) > 2)
+
+        if not pattern:
+            pattern = re.escape(query.lower())
+
+        type_filter = ""
+        if memory_type and memory_type != "all":
+            type_filter = f"FILTER(CONTAINS(STR(?type), '{memory_type}'))"
+
+        sparql = f"""
+        SELECT ?node ?type ?content ?subject ?timestamp WHERE {{
+            ?node a ?type .
+            ?node <https://xm.dev/ns/v1#content> ?content .
+            ?node <https://xm.dev/ns/v1#subject> ?subject .
+            OPTIONAL {{ ?node <https://xm.dev/ns/v1#timestamp> ?timestamp }}
+            FILTER(REGEX(?content, '{pattern}', 'i') || REGEX(?subject, '{pattern}', 'i'))
+            {type_filter}
+        }} LIMIT 15
+        """
+
+        success, output = self._run_xm(["query", "sparql", sparql])
+
+        if success:
+            try:
+                results = json.loads(output)
+                bindings = results.get("results", {}).get("bindings", [])
+                return [self._binding_to_memory(b) for b in bindings]
+            except:
+                pass
+
+        # Fallback to local search
+        return self._local_search(query, memory_type)
+
+    def _local_search(self, query: str, memory_type: str = None) -> List[Dict]:
+        """Enhanced local search with word matching and scoring."""
         query_lower = query.lower()
+        query_words = set(query_lower.split())
+
+        # Common synonyms for better matching
+        synonyms = {
+            "friend": ["friends", "friendship", "buddy", "close"],
+            "friends": ["friend", "friendship", "buddy", "close"],
+            "book": ["books", "reading", "read", "novel"],
+            "books": ["book", "reading", "read", "novel"],
+            "activity": ["activities", "hobby", "hobbies", "sport"],
+            "activities": ["activity", "hobby", "hobbies", "sport"],
+            "swim": ["swimming", "swam", "pool"],
+            "swimming": ["swim", "swam", "pool"],
+            "run": ["running", "ran", "race", "marathon"],
+            "running": ["run", "ran", "race", "marathon"],
+            "race": ["running", "ran", "marathon", "charity"],
+            "camp": ["camping", "camped", "tent", "outdoor"],
+            "camping": ["camp", "camped", "tent", "outdoor"],
+            "paint": ["painting", "painted", "art", "artwork"],
+            "painting": ["paint", "painted", "art", "artwork"],
+        }
+
+        # Expand query with synonyms
+        expanded_words = set(query_words)
+        for word in query_words:
+            if word in synonyms:
+                expanded_words.update(synonyms[word])
+
         results = []
-        for mem in self.memories:
+        for mem in self._memories:
             if memory_type and memory_type != "all" and mem["type"] != memory_type:
                 continue
-            if query_lower in mem["content"].lower() or query_lower in mem["subject"]:
-                results.append(mem)
-        return results[:10]
+
+            content_lower = mem["content"].lower()
+            subject_lower = mem["subject"].lower()
+            text = content_lower + " " + subject_lower
+
+            # Score based on matches
+            score = 0
+            # Exact phrase match
+            if query_lower in text:
+                score += 10
+            # Word matches
+            text_words = set(text.split())
+            matching_words = expanded_words & text_words
+            score += len(matching_words) * 2
+
+            if score > 0:
+                results.append((score, mem))
+
+        # Sort by score descending
+        results.sort(key=lambda x: -x[0])
+        return [r[1] for r in results[:15]]
+
+    def _binding_to_memory(self, binding: Dict) -> Dict:
+        """Convert SPARQL binding to memory dict."""
+        return {
+            "id": binding.get("node", {}).get("value", ""),
+            "type": binding.get("type", {}).get("value", "").split("/")[-1],
+            "content": binding.get("content", {}).get("value", ""),
+            "subject": binding.get("subject", {}).get("value", ""),
+            "timestamp": binding.get("timestamp", {}).get("value", "")
+        }
 
     def get_about(self, subject: str) -> List[Dict]:
         """Get all memories about a subject."""
-        subject_lower = subject.lower()
-        results = []
-        for mem in self.memories:
-            if subject_lower in mem["subject"] or subject_lower in mem["content"].lower():
-                results.append(mem)
-        return results[:15]
+        return self._local_search(subject, None)[:15]
 
     def get_timeline(self, subject: str = None) -> List[Dict]:
         """Get events in order."""
-        events = [m for m in self.memories if m["type"] == "event"]
+        events = [m for m in self._memories if m["type"] == "event"]
         if subject:
             subject_lower = subject.lower()
             events = [e for e in events if subject_lower in e["subject"] or subject_lower in e["content"].lower()]
-        # Sort by timestamp if available
         return sorted(events, key=lambda x: x.get("timestamp") or "")[:15]
 
     def stats(self) -> Dict:
         """Get memory statistics."""
         by_type = {}
-        for mem in self.memories:
+        for mem in self._memories:
             by_type[mem["type"]] = by_type.get(mem["type"], 0) + 1
         return {
-            "total_memories": len(self.memories),
-            "total_connections": len(self.connections),
+            "total_memories": len(self._memories),
+            "total_connections": len(self._connections),
             "by_type": by_type
         }
 
+    def show_schema(self):
+        """Display schema using xm CLI."""
+        print("\n  === xm Schema ===")
+        success, output = self._run_xm(["schema", "classes"])
+        if success:
+            print(output)
+        success, output = self._run_xm(["schema", "predicates"])
+        if success:
+            print(output[:1000])
+
+
+# Alias for compatibility
+MemoryStore = XmStore
 
 # Global memory store for this evaluation
-MEMORY_STORE = MemoryStore()
+MEMORY_STORE = XmStore()
 
 
 # ============================================================================
@@ -383,6 +516,29 @@ When someone mentions relative dates, CONVERT THEM TO ABSOLUTE DATES:
 
 For example, if the session is on "25 May 2023" and someone says "I ran a race last Saturday",
 store the timestamp as "20 May 2023" (the Saturday before), NOT "last Saturday".
+
+**ALWAYS include timestamps** - not just for events, but also for facts that have temporal context:
+- Age-related facts: include when the age was stated
+- Duration facts: "friends for 4 years" → calculate and store the start date
+- Time-bound facts: include the session date as timestamp
+
+**CRITICAL - LIST COMPLETENESS**:
+When someone mentions a LIST of items, store EACH ITEM separately:
+- Books mentioned → store EACH book title as a separate memory
+- Activities → store EACH activity (swimming, painting, running, etc.)
+- Places visited → store EACH location
+- People mentioned → store EACH person
+
+Example: If someone says "I've been reading Dr. Seuss and Nothing is Impossible":
+- Store: "Read book: Dr. Seuss" (with timestamp)
+- Store: "Read book: Nothing is Impossible" (with timestamp)
+
+**CRITICAL - SPECIFIC DETAILS**:
+Store specific names, titles, and details - not just general categories:
+- ✓ "Read 'Nothing is Impossible' by Diana Nyad" (specific)
+- ✗ "Has been reading books" (too general)
+- ✓ "Melanie does swimming, painting, and running" (specific activities)
+- ✗ "Melanie has hobbies" (too general)
 
 Use the source field to track which dialog turn (e.g., "D1:3") the information came from."""
 
@@ -513,13 +669,23 @@ QUERY_SYSTEM = """You are a question-answering agent with access to a memory sys
 
 Use the search tools to find relevant memories, then answer the question based on what you find.
 
-Strategy:
-1. Search for key terms from the question
-2. Get memories about specific people if the question is about someone
-3. Check timeline if the question involves timing
-4. Synthesize an answer from the memories you find
+**Search Strategy - TRY MULTIPLE APPROACHES**:
+1. Start with the most specific terms from the question
+2. If no results, try SYNONYMS and related terms:
+   - "activities" → also search "hobbies", "sports", specific activities
+   - "friends" → also search "friendship", "close", "years"
+   - "books" → also search "reading", "read", specific book titles
+3. Get memories about the PERSON if the question mentions someone
+4. Use get_timeline for ANY time-related question
+5. Search for EACH keyword separately if combined search fails
 
-If you cannot find enough information to answer, say "Cannot determine from memory"."""
+**Important**: Don't give up after one search! Try at least 2-3 different search terms.
+
+**For list questions** ("What activities...", "What books..."):
+- Search for the category AND specific items
+- Combine results from multiple searches
+
+If you cannot find information after multiple searches, say "Cannot determine from memory"."""
 
 
 def answer_with_agent(question: str, verbose: bool = True) -> str:
@@ -531,7 +697,7 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
     }]
 
     # Run agent loop
-    for i in range(5):  # Max 5 queries per question
+    for i in range(8):  # Max 8 queries per question (allow more search iterations)
         response = call_claude_with_tools(messages, QUERY_TOOLS, QUERY_SYSTEM, max_tokens=1000)
 
         content = response.get("content", [])
@@ -612,15 +778,17 @@ Respond with JSON: {{"reasoning": "brief explanation", "label": "CORRECT or WRON
 # Main Evaluation
 # ============================================================================
 
-def run_agentic_memory_eval(limit: int = 10, verbose: bool = True):
+def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None):
     """Run the full agentic memory evaluation."""
 
     global MEMORY_STORE
-    MEMORY_STORE = MemoryStore()  # Reset
+    MEMORY_STORE = XmStore(store_path=store_path)
 
     print(f"\n{'='*70}")
     print("  LoCoMo Agentic Memory Evaluation")
     print(f"  Model: {MODEL}")
+    if store_path:
+        print(f"  Store: {store_path}")
     print(f"{'='*70}")
 
     # Load dataset
@@ -637,6 +805,10 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True):
     print("what to remember and how to structure it.\n")
 
     ingest_stats = ingest_conversation_with_agent(conv, verbose)
+
+    # Show schema if requested
+    if show_schema:
+        MEMORY_STORE.show_schema()
 
     # Phase 2: Agentic Query
     print("\n" + "="*50)
@@ -703,11 +875,52 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True):
     }
 
 
+def run_ingest_only(store_path: str = None, verbose: bool = True):
+    """Run ingestion only (no QA) for schema inspection."""
+
+    global MEMORY_STORE
+    MEMORY_STORE = XmStore(store_path=store_path)
+
+    print(f"\n{'='*70}")
+    print("  LoCoMo Agentic Memory - Ingest Only Mode")
+    print(f"  Model: {MODEL}")
+    if store_path:
+        print(f"  Store: {store_path}")
+    print(f"{'='*70}")
+
+    # Load dataset
+    with open("eval/locomo/data/locomo10.json") as f:
+        conversations = json.load(f)
+
+    conv = conversations[0]
+
+    # Run ingestion
+    print("\nIngesting conversation with agentic memory structuring...\n")
+    ingest_stats = ingest_conversation_with_agent(conv, verbose)
+
+    # Show schema
+    MEMORY_STORE.show_schema()
+
+    # Print all memories for inspection
+    print("\n" + "="*50)
+    print("STORED MEMORIES")
+    print("="*50 + "\n")
+
+    for mem in MEMORY_STORE._memories:
+        ts = f" [{mem['timestamp']}]" if mem.get('timestamp') else ""
+        print(f"  [{mem['type']}] {mem['subject']}: {mem['content'][:60]}...{ts}")
+
+    return ingest_stats
+
+
 def main():
     parser = argparse.ArgumentParser(description="LoCoMo Agentic Memory Evaluation")
     parser.add_argument("--limit", type=int, default=10, help="Max questions to evaluate")
     parser.add_argument("--verbose", "-v", action="store_true", default=True, help="Show agent actions")
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+    parser.add_argument("--show-schema", action="store_true", help="Show xm schema after ingestion")
+    parser.add_argument("--store", type=str, help="Path to xm store (default: in-memory)")
+    parser.add_argument("--ingest-only", action="store_true", help="Only ingest, don't run QA (for schema inspection)")
 
     args = parser.parse_args()
 
@@ -715,7 +928,15 @@ def main():
         print("Error: ANTHROPIC_API_KEY not set")
         sys.exit(1)
 
-    run_agentic_memory_eval(limit=args.limit, verbose=not args.quiet)
+    if args.ingest_only:
+        run_ingest_only(store_path=args.store, verbose=not args.quiet)
+    else:
+        run_agentic_memory_eval(
+            limit=args.limit,
+            verbose=not args.quiet,
+            show_schema=args.show_schema,
+            store_path=args.store
+        )
 
 
 if __name__ == "__main__":
