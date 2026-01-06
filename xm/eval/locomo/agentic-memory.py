@@ -19,6 +19,7 @@ import argparse
 import os
 import sys
 import re
+import time
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 import requests
@@ -26,7 +27,8 @@ import requests
 XM_DIR = Path(__file__).parent.parent.parent
 os.chdir(XM_DIR)
 
-MODEL = "claude-sonnet-4-5-20250929"
+MODEL = "gpt-4o-mini"
+API_PROVIDER = "openai"  # "anthropic" or "openai"
 GRAPH_URI = "https://xm.dev/ns/v1#graph/locomo/agentic"
 
 CATEGORY_NAMES = {
@@ -198,32 +200,178 @@ QUERY_TOOLS = [
 ]
 
 
-def call_claude_with_tools(messages: List[Dict], tools: List[Dict], system: str, max_tokens: int = 1500) -> Dict:
-    """Call Claude API with tools."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
+def call_llm_with_tools(messages: List[Dict], tools: List[Dict], system: str, max_tokens: int = 1500) -> Dict:
+    """Call LLM API with tools, with retry logic for connection errors."""
 
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01"
-        },
-        json={
-            "model": MODEL,
-            "max_tokens": max_tokens,
-            "system": system,
-            "tools": tools,
-            "messages": messages
-        }
-    )
+    max_retries = 5
+    base_delay = 1  # seconds
 
-    if response.status_code == 200:
-        return response.json()
-    print(f"API error: {response.status_code} - {response.text[:200]}")
+    for attempt in range(max_retries):
+        try:
+            if API_PROVIDER == "openai":
+                api_key = os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OPENAI_API_KEY not set")
+
+                # Convert tools to OpenAI format
+                openai_tools = []
+                for tool in tools:
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": tool["name"],
+                            "description": tool["description"],
+                            "parameters": tool["input_schema"]
+                        }
+                    })
+
+                # Add system message to messages
+                openai_messages = [{"role": "system", "content": system}] + messages
+
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}"
+                    },
+                    json={
+                        "model": MODEL,
+                        "max_tokens": max_tokens,
+                        "messages": openai_messages,
+                        "tools": openai_tools if openai_tools else None
+                    },
+                    timeout=60
+                )
+
+                if response.status_code == 200:
+                    return convert_openai_response(response.json())
+            else:
+                # Anthropic
+                api_key = os.environ.get("ANTHROPIC_API_KEY")
+                if not api_key:
+                    raise ValueError("ANTHROPIC_API_KEY not set")
+
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01"
+                    },
+                    json={
+                        "model": MODEL,
+                        "max_tokens": max_tokens,
+                        "system": system,
+                        "tools": tools,
+                        "messages": messages
+                    },
+                    timeout=60
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+
+            # Handle errors
+            if response.status_code == 529 or response.status_code == 429:  # Overloaded/rate limit
+                delay = base_delay * (2 ** attempt)
+                print(f"  [API rate limited, retrying in {delay}s...]")
+                time.sleep(delay)
+                continue
+            elif response.status_code >= 500:  # Server error
+                delay = base_delay * (2 ** attempt)
+                print(f"  [Server error {response.status_code}, retrying in {delay}s...]")
+                time.sleep(delay)
+                continue
+            else:
+                print(f"API error: {response.status_code} - {response.text[:200]}")
+                return {"content": [], "stop_reason": "error"}
+
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError) as e:
+            delay = base_delay * (2 ** attempt)
+            print(f"  [Connection error, retrying in {delay}s: {str(e)[:50]}...]")
+            time.sleep(delay)
+            continue
+
+    print(f"  [Max retries exceeded]")
     return {"content": [], "stop_reason": "error"}
+
+
+def convert_openai_response(openai_resp: Dict) -> Dict:
+    """Convert OpenAI response to Anthropic-like format for compatibility."""
+    choice = openai_resp.get("choices", [{}])[0]
+    message = choice.get("message", {})
+    finish_reason = choice.get("finish_reason", "")
+
+    content = []
+
+    # Add text content
+    if message.get("content"):
+        content.append({"type": "text", "text": message["content"]})
+
+    # Add tool calls
+    for tool_call in message.get("tool_calls", []):
+        if tool_call.get("type") == "function":
+            content.append({
+                "type": "tool_use",
+                "id": tool_call["id"],
+                "name": tool_call["function"]["name"],
+                "input": json.loads(tool_call["function"]["arguments"])
+            })
+
+    stop_reason = "end_turn" if finish_reason == "stop" else finish_reason
+
+    return {
+        "content": content,
+        "stop_reason": stop_reason
+    }
+
+
+# Alias for compatibility
+call_claude_with_tools = call_llm_with_tools
+
+
+def format_assistant_message(content: List[Dict]) -> Dict:
+    """Format assistant message for the current API provider."""
+    if API_PROVIDER == "openai":
+        # Convert to OpenAI format
+        text_parts = []
+        tool_calls = []
+        for item in content:
+            if item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+            elif item.get("type") == "tool_use":
+                tool_calls.append({
+                    "id": item["id"],
+                    "type": "function",
+                    "function": {
+                        "name": item["name"],
+                        "arguments": json.dumps(item["input"])
+                    }
+                })
+        msg = {"role": "assistant", "content": " ".join(text_parts) if text_parts else None}
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        return msg
+    else:
+        return {"role": "assistant", "content": content}
+
+
+def format_tool_results(tool_results: List[Dict]) -> Any:
+    """Format tool results for the current API provider."""
+    if API_PROVIDER == "openai":
+        # OpenAI needs separate messages for each tool result
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": tr["tool_use_id"],
+                "content": tr["content"]
+            }
+            for tr in tool_results
+        ]
+    else:
+        return {"role": "user", "content": tool_results}
 
 
 # ============================================================================
@@ -569,7 +717,7 @@ def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: boo
 
     # Run agent loop
     for i in range(15):  # Max 15 tool calls per session
-        response = call_claude_with_tools(messages, INGESTION_TOOLS, INGESTION_SYSTEM, max_tokens=1500)
+        response = call_llm_with_tools(messages, INGESTION_TOOLS, INGESTION_SYSTEM, max_tokens=1500)
 
         content = response.get("content", [])
         stop_reason = response.get("stop_reason", "")
@@ -599,8 +747,12 @@ def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: boo
             if "xm_remember" in tool_name:
                 memories_created += 1
 
-        messages.append({"role": "assistant", "content": content})
-        messages.append({"role": "user", "content": tool_results})
+        messages.append(format_assistant_message(content))
+        formatted_results = format_tool_results(tool_results)
+        if isinstance(formatted_results, list):
+            messages.extend(formatted_results)
+        else:
+            messages.append(formatted_results)
 
     return memories_created
 
@@ -698,7 +850,7 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
 
     # Run agent loop
     for i in range(8):  # Max 8 queries per question (allow more search iterations)
-        response = call_claude_with_tools(messages, QUERY_TOOLS, QUERY_SYSTEM, max_tokens=1000)
+        response = call_llm_with_tools(messages, QUERY_TOOLS, QUERY_SYSTEM, max_tokens=1000)
 
         content = response.get("content", [])
         stop_reason = response.get("stop_reason", "")
@@ -727,8 +879,12 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
                 "content": result
             })
 
-        messages.append({"role": "assistant", "content": content})
-        messages.append({"role": "user", "content": tool_results})
+        messages.append(format_assistant_message(content))
+        formatted_results = format_tool_results(tool_results)
+        if isinstance(formatted_results, list):
+            messages.extend(formatted_results)
+        else:
+            messages.append(formatted_results)
 
     return "Cannot determine (max queries reached)"
 
@@ -738,8 +894,7 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
 # ============================================================================
 
 def judge_answer(question: str, gold: str, generated: str) -> int:
-    """Judge if answer is correct."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    """Judge if answer is correct, with retry logic."""
 
     prompt = f"""You are evaluating a QA system response.
 
@@ -752,25 +907,77 @@ For dates, flexible matching is OK (May 7th = 7 May = May 2023).
 
 Respond with JSON: {{"reasoning": "brief explanation", "label": "CORRECT or WRONG"}}"""
 
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01"
-        },
-        json={
-            "model": MODEL,
-            "max_tokens": 100,
-            "messages": [{"role": "user", "content": prompt}]
-        }
-    )
+    max_retries = 5
+    base_delay = 1
 
-    if response.status_code == 200:
-        content = response.json().get("content", [])
-        if content:
-            text = content[0].get("text", "")
-            return 1 if "CORRECT" in text.upper() else 0
+    for attempt in range(max_retries):
+        try:
+            if API_PROVIDER == "openai":
+                api_key = os.environ.get("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OPENAI_API_KEY not set")
+
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}"
+                    },
+                    json={
+                        "model": MODEL,
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": prompt}]
+                    },
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    choices = response.json().get("choices", [])
+                    if choices:
+                        text = choices[0].get("message", {}).get("content", "")
+                        return 1 if "CORRECT" in text.upper() else 0
+                    return 0
+            else:
+                api_key = os.environ.get("ANTHROPIC_API_KEY")
+                if not api_key:
+                    raise ValueError("ANTHROPIC_API_KEY not set")
+
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01"
+                    },
+                    json={
+                        "model": MODEL,
+                        "max_tokens": 100,
+                        "messages": [{"role": "user", "content": prompt}]
+                    },
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    content = response.json().get("content", [])
+                    if content:
+                        text = content[0].get("text", "")
+                        return 1 if "CORRECT" in text.upper() else 0
+                    return 0
+
+            if response.status_code >= 500 or response.status_code in [529, 429]:
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+                continue
+            else:
+                return 0
+
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError):
+            delay = base_delay * (2 ** attempt)
+            time.sleep(delay)
+            continue
+
     return 0
 
 
