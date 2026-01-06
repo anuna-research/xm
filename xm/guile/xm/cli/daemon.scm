@@ -94,7 +94,7 @@
 ;;; Daemon Lifecycle
 ;;; --------------------------------------------------------------------
 
-(define (daemon-start #:key foreground)
+(define* (daemon-start #:key foreground)
   "Start the xm daemon.
    If FOREGROUND is true, run in foreground instead of backgrounding."
 

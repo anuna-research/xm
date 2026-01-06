@@ -387,7 +387,7 @@ ORDER BY DESC(?cap)" cap-graph (xm-uri "Capability")
                   (format #t "Status: ~a\n"
                           (if (assoc-ref details 'revoked) "revoked" "active"))
                   (when (assoc-ref details 'label)
-                    (format #t "Label: ~a\n" (assoc-ref details 'label)))))))))
+                    (format #t "Label: ~a\n" (assoc-ref details 'label))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions

@@ -399,7 +399,7 @@ WHERE {
                   (format #t "Agent: ~a\n" agent)
                   (format #t "Context nodes: ~a\n" (length context-nodes))
                   (format #t "Previous discoveries: ~a\n" (length discoveries))
-                  (when replay (format #t "Replaying discoveries into context\n")))))))))
+                  (when replay (format #t "Replaying discoveries into context\n"))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; session history
@@ -524,7 +524,7 @@ LIMIT ~a" (xm-graph-uri "public") prov:wasGeneratedBy full-session-id
                                (assoc-ref lnk 'id)
                                (assoc-ref lnk 'source)
                                (assoc-ref lnk 'target)))
-                     links))))))))
+                     links)))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions
