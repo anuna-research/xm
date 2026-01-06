@@ -148,6 +148,66 @@ int xm_store_count(struct xm_XmStore *store);
 int xm_store_is_empty(struct xm_XmStore *store);
 
 /**
+ * List all named graphs in the store, returning JSON array of URIs.
+ *
+ * # Safety
+ * - `store` must be a valid store pointer
+ * - `buf` must point to a buffer of at least `buf_len` bytes
+ * - Returns bytes written, or negative error code
+ */
+int xm_store_list_graphs(struct xm_XmStore *store, char *buf, size_t buf_len);
+
+/**
+ * Check if a named graph exists in the store.
+ *
+ * # Safety
+ * - `store` must be a valid store pointer
+ * - `graph` must be a valid null-terminated URI string
+ * - Returns 1 if exists, 0 if not, negative on error
+ */
+int xm_store_graph_exists(struct xm_XmStore *store, const char *graph);
+
+/**
+ * Create an empty named graph (inserts graph name into store).
+ *
+ * # Safety
+ * - `store` must be a valid store pointer
+ * - `graph` must be a valid null-terminated URI string
+ * - Returns 0 on success, negative on error
+ */
+int xm_store_create_graph(struct xm_XmStore *store, const char *graph);
+
+/**
+ * Drop a named graph and all its triples.
+ *
+ * # Safety
+ * - `store` must be a valid store pointer
+ * - `graph` must be a valid null-terminated URI string
+ * - Returns 0 on success, negative on error
+ */
+int xm_store_drop_graph(struct xm_XmStore *store, const char *graph);
+
+/**
+ * Clear all triples in a named graph (graph name remains).
+ *
+ * # Safety
+ * - `store` must be a valid store pointer
+ * - `graph` must be a valid null-terminated URI string
+ * - Returns 0 on success, negative on error
+ */
+int xm_store_clear_graph(struct xm_XmStore *store, const char *graph);
+
+/**
+ * Count quads in a specific named graph.
+ *
+ * # Safety
+ * - `store` must be a valid store pointer
+ * - `graph` must be a valid null-terminated URI string
+ * - Returns count, or negative on error
+ */
+int xm_store_graph_count(struct xm_XmStore *store, const char *graph);
+
+/**
  * Generate a new UUID v4 and write it to the buffer.
  *
  * # Safety

@@ -20,6 +20,11 @@
             cmd-cap-list
             cmd-cap-inspect))
 
+;;; Re-export vocabulary bindings for use in this module
+(define rdf:type (@ (xm vocabulary) rdf:type))
+(define rdfs:label (@ (xm vocabulary) rdfs:label))
+(define dcterms:created (@ (xm vocabulary) dcterms:created))
+
 ;;; --------------------------------------------------------------------
 ;;; Capability Command Dispatcher
 ;;; --------------------------------------------------------------------
@@ -87,16 +92,40 @@
       (let* ((cap-id (xm-cap-uri (generate-uuid)))
              (timestamp (current-iso-timestamp))
              (expires-at (and expires (parse-duration-to-iso expires)))
-             (result `((id . ,cap-id)
-                       (graphs . ,graphs)
-                       (permissions . ,permissions)
-                       (created_at . ,timestamp)
-                       (expires . ,expires-at)
-                       (label . ,label))))
+             (cap-graph (capabilities-graph-uri)))
 
-        ;; In production: (<- cap-store 'create graphs permissions expires label)
+        ;; Store capability in RDF
+        (store-insert-quad store cap-id rdf:type (xm-uri "Capability") #:graph cap-graph)
+        (store-insert-quad store cap-id dcterms:created timestamp #:graph cap-graph)
 
-        (if (assoc-ref global-opts "json")
+        ;; Store granted graphs
+        (for-each
+         (lambda (g)
+           (store-insert-quad store cap-id (xm-uri "grantsAccess") (expand-uri g) #:graph cap-graph))
+         graphs)
+
+        ;; Store permissions
+        (for-each
+         (lambda (perm)
+           (store-insert-quad store cap-id (xm-uri "hasPermission") (symbol->string perm) #:graph cap-graph))
+         permissions)
+
+        ;; Store expiration if present
+        (when expires-at
+          (store-insert-quad store cap-id (xm-uri "expiresAt") expires-at #:graph cap-graph))
+
+        ;; Store label if present
+        (when label
+          (store-insert-quad store cap-id rdfs:label label #:graph cap-graph))
+
+        (let ((result `((id . ,cap-id)
+                        (graphs . ,graphs)
+                        (permissions . ,permissions)
+                        (created_at . ,timestamp)
+                        (expires . ,expires-at)
+                        (label . ,label))))
+
+          (if (assoc-ref global-opts "json")
             (output-result result global-opts)
             (begin
               (format #t "\nCapability created: ~a\n" cap-id)
@@ -104,7 +133,7 @@
               (format #t "Permissions: ~a\n" permissions)
               (when expires-at (format #t "Expires: ~a\n" expires-at))
               (when label (format #t "Label: ~a\n" label))
-              (format #t "\nExport XM_CAP=~a\n" cap-id)))))))
+              (format #t "\nExport XM_CAP=~a\n" cap-id))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap attenuate
@@ -149,27 +178,54 @@
       (let* ((cap-id (xm-cap-uri (generate-uuid)))
              (timestamp (current-iso-timestamp))
              (expires-at (and expires (parse-duration-to-iso expires)))
-             (result `((id . ,cap-id)
-                       (parent . ,parent-id)
-                       (graphs . ,(if (null? graphs) "inherited" graphs))
-                       (permissions . ,(if (null? permissions) "inherited" permissions))
-                       (created_at . ,timestamp)
-                       (expires . ,expires-at)
-                       (label . ,label))))
+             (cap-graph (capabilities-graph-uri)))
 
-        ;; In production: (<- cap-store 'attenuate parent-id graphs permissions expires label)
+        ;; Store capability in RDF
+        (store-insert-quad store cap-id rdf:type (xm-uri "Capability") #:graph cap-graph)
+        (store-insert-quad store cap-id dcterms:created timestamp #:graph cap-graph)
+        (store-insert-quad store cap-id (xm-uri "parent") (expand-uri parent-id) #:graph cap-graph)
 
-        (if (assoc-ref global-opts "json")
-            (output-result result global-opts)
-            (begin
-              (format #t "\nAttenuated capability created: ~a\n" cap-id)
-              (format #t "Parent: ~a\n" parent-id)
-              (unless (null? graphs)
-                (format #t "Graphs: ~a\n" (string-join graphs ", ")))
-              (unless (null? permissions)
-                (format #t "Permissions: ~a\n" permissions))
-              (when expires-at (format #t "Expires: ~a\n" expires-at))
-              (when label (format #t "Label: ~a\n" label))))))))
+        ;; Store granted graphs (if specified, otherwise inherit from parent)
+        (unless (null? graphs)
+          (for-each
+           (lambda (g)
+             (store-insert-quad store cap-id (xm-uri "grantsAccess") (expand-uri g) #:graph cap-graph))
+           graphs))
+
+        ;; Store permissions (if specified)
+        (unless (null? permissions)
+          (for-each
+           (lambda (perm)
+             (store-insert-quad store cap-id (xm-uri "hasPermission") (symbol->string perm) #:graph cap-graph))
+           permissions))
+
+        ;; Store expiration if present
+        (when expires-at
+          (store-insert-quad store cap-id (xm-uri "expiresAt") expires-at #:graph cap-graph))
+
+        ;; Store label if present
+        (when label
+          (store-insert-quad store cap-id rdfs:label label #:graph cap-graph))
+
+        (let ((result `((id . ,cap-id)
+                        (parent . ,parent-id)
+                        (graphs . ,(if (null? graphs) "inherited" graphs))
+                        (permissions . ,(if (null? permissions) "inherited" permissions))
+                        (created_at . ,timestamp)
+                        (expires . ,expires-at)
+                        (label . ,label))))
+
+          (if (assoc-ref global-opts "json")
+              (output-result result global-opts)
+              (begin
+                (format #t "\nAttenuated capability created: ~a\n" cap-id)
+                (format #t "Parent: ~a\n" parent-id)
+                (unless (null? graphs)
+                  (format #t "Graphs: ~a\n" (string-join graphs ", ")))
+                (unless (null? permissions)
+                  (format #t "Permissions: ~a\n" permissions))
+                (when expires-at (format #t "Expires: ~a\n" expires-at))
+                (when label (format #t "Label: ~a\n" label)))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap revoke
@@ -192,19 +248,28 @@
                     global-opts)
       (exit 2))
 
-    ;; In production: (<- cap-store 'revoke cap-id)
+    (let ((cap-graph (capabilities-graph-uri))
+          (full-cap-id (expand-uri cap-id)))
 
-    (let ((result `((revoked . ,cap-id)
-                    (cascade . ,(if cascade #t #f))
-                    (derived_revoked . 0))))
+      ;; Set revoked flag in RDF store
+      (store-insert-quad store full-cap-id (xm-uri "revoked") "true" #:graph cap-graph)
+      (store-insert-quad store full-cap-id (xm-uri "revokedAt") (current-iso-timestamp) #:graph cap-graph)
 
-      (if (assoc-ref global-opts "json")
-          (output-result result global-opts)
-          (begin
-            (format #t "\nCapability revoked: ~a\n" cap-id)
-            (when cascade
-              (format #t "Derived capabilities also revoked: ~a\n"
-                      (assoc-ref result 'derived_revoked))))))))
+      ;; If cascade, find and revoke derived capabilities
+      (let ((derived-count (if cascade
+                               (revoke-derived-capabilities store cap-graph full-cap-id)
+                               0)))
+
+        (let ((result `((revoked . ,cap-id)
+                        (cascade . ,(if cascade #t #f))
+                        (derived_revoked . ,derived-count))))
+
+          (if (assoc-ref global-opts "json")
+              (output-result result global-opts)
+              (begin
+                (format #t "\nCapability revoked: ~a\n" cap-id)
+                (when cascade
+                  (format #t "Derived capabilities also revoked: ~a\n" derived-count)))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; cap list
@@ -219,11 +284,28 @@
 
   (let* ((created-by-me (assoc-ref opts "created-by-me"))
          (active-only (assoc-ref opts "active-only"))
-         (show-expired (assoc-ref opts "expired")))
+         (show-expired (assoc-ref opts "expired"))
+         (cap-graph (capabilities-graph-uri)))
 
-    ;; In production: (<- cap-store 'list-all (not active-only) show-expired)
-
-    (let ((capabilities '()))
+    ;; Query capabilities from store
+    (let* ((sparql (format #f "SELECT ?cap ?label ?revoked ?expires
+FROM <~a>
+WHERE {
+  ?cap a <~a> .
+  OPTIONAL { ?cap <~a> ?label }
+  OPTIONAL { ?cap <~a> ?revoked }
+  OPTIONAL { ?cap <~a> ?expires }
+  ~a
+}
+ORDER BY DESC(?cap)" cap-graph (xm-uri "Capability")
+                           rdfs:label (xm-uri "revoked") (xm-uri "expiresAt")
+                           (if active-only
+                               (format #f "FILTER(!BOUND(?revoked) || ?revoked != \"true\")")
+                               "")))
+           (json-result (store-query store sparql))
+           (parsed (json-string->scm json-result))
+           (bindings (get-sparql-bindings parsed))
+           (capabilities (map parse-cap-binding bindings)))
 
       (if (assoc-ref global-opts "json")
           (output-result `((capabilities . ,capabilities)
@@ -240,9 +322,8 @@
                 (format #t "  (no capabilities found)\n")
                 (for-each
                  (lambda (cap)
-                   (format #t "  ~a  ~a  ~a\n"
+                   (format #t "  ~a  ~a\n"
                            (assoc-ref cap 'id)
-                           (assoc-ref cap 'permissions)
                            (or (assoc-ref cap 'label) "")))
                  capabilities)))))))
 
@@ -264,35 +345,49 @@
                     global-opts)
       (exit 2))
 
-    ;; In production: (<- cap-store 'get cap-id)
+    (let* ((cap-graph (capabilities-graph-uri))
+           (full-cap-id (expand-uri cap-id))
+           ;; Query capability details
+           (details (query-cap-details store cap-graph full-cap-id))
+           ;; Query granted graphs
+           (graphs (query-cap-graphs store cap-graph full-cap-id))
+           ;; Query permissions
+           (permissions (query-cap-permissions store cap-graph full-cap-id)))
 
-    (let ((result `((id . ,cap-id)
-                    (graphs . ("xm:graph/public" "xm:graph/agent/claude"))
-                    (permissions . (read write))
-                    (created_at . ,(current-iso-timestamp))
-                    (created_by . #f)
-                    (expires . #f)
-                    (revoked . #f)
-                    (label . "Example capability"))))
-
-      (if (assoc-ref global-opts "json")
-          (output-result result global-opts)
+      (if (null? details)
           (begin
-            (format #t "\nCapability: ~a\n\n" cap-id)
-            (format #t "Graphs:\n")
-            (for-each (lambda (g) (format #t "  - ~a\n" g))
-                      (assoc-ref result 'graphs))
-            (format #t "\nPermissions: ~a\n" (assoc-ref result 'permissions))
-            (format #t "Created: ~a\n" (assoc-ref result 'created_at))
-            (when (assoc-ref result 'created_by)
-              (format #t "Parent: ~a\n" (assoc-ref result 'created_by)))
-            (if (assoc-ref result 'expires)
-                (format #t "Expires: ~a\n" (assoc-ref result 'expires))
-                (format #t "Expires: never\n"))
-            (format #t "Status: ~a\n"
-                    (if (assoc-ref result 'revoked) "revoked" "active"))
-            (when (assoc-ref result 'label)
-              (format #t "Label: ~a\n" (assoc-ref result 'label))))))))
+            (output-error "CAP_NOT_FOUND"
+                          (format #f "Capability not found: ~a" cap-id)
+                          "Use 'xm cap list' to see available capabilities"
+                          global-opts)
+            (exit 1))
+          (let ((result `((id . ,(compact-uri full-cap-id))
+                          (graphs . ,(map compact-uri graphs))
+                          (permissions . ,permissions)
+                          (created_at . ,(assoc-ref details 'created))
+                          (parent . ,(assoc-ref details 'parent))
+                          (expires . ,(assoc-ref details 'expires))
+                          (revoked . ,(assoc-ref details 'revoked))
+                          (label . ,(assoc-ref details 'label)))))
+
+            (if (assoc-ref global-opts "json")
+                (output-result result global-opts)
+                (begin
+                  (format #t "\nCapability: ~a\n\n" (compact-uri full-cap-id))
+                  (format #t "Graphs:\n")
+                  (for-each (lambda (g) (format #t "  - ~a\n" g))
+                            (map compact-uri graphs))
+                  (format #t "\nPermissions: ~a\n" permissions)
+                  (format #t "Created: ~a\n" (or (assoc-ref details 'created) "unknown"))
+                  (when (assoc-ref details 'parent)
+                    (format #t "Parent: ~a\n" (compact-uri (assoc-ref details 'parent))))
+                  (if (assoc-ref details 'expires)
+                      (format #t "Expires: ~a\n" (assoc-ref details 'expires))
+                      (format #t "Expires: never\n"))
+                  (format #t "Status: ~a\n"
+                          (if (assoc-ref details 'revoked) "revoked" "active"))
+                  (when (assoc-ref details 'label)
+                    (format #t "Label: ~a\n" (assoc-ref details 'label)))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions
@@ -363,3 +458,132 @@
             (loop (cdr lst) acc)))))
 
 (define (identity x) x)
+
+;;; --------------------------------------------------------------------
+;;; Capability Graph URI
+;;; --------------------------------------------------------------------
+
+(define (capabilities-graph-uri)
+  "Get the capabilities graph URI."
+  (xm-graph-uri "capabilities"))
+
+;;; --------------------------------------------------------------------
+;;; SPARQL Result Parsing Helpers
+;;; --------------------------------------------------------------------
+
+(define (get-sparql-bindings parsed)
+  "Extract bindings list from parsed SPARQL JSON result."
+  (let ((results (assoc-ref parsed "results")))
+    (if results
+        (or (assoc-ref results "bindings") '())
+        '())))
+
+(define (get-binding-value binding var-name)
+  "Get the value of a variable from a SPARQL binding."
+  (let ((var-data (assoc-ref binding var-name)))
+    (if var-data
+        (assoc-ref var-data "value")
+        #f)))
+
+(define (parse-cap-binding binding)
+  "Parse a capability from a SPARQL binding."
+  (let ((cap-val (get-binding-value binding "cap"))
+        (label-val (get-binding-value binding "label"))
+        (revoked-val (get-binding-value binding "revoked"))
+        (expires-val (get-binding-value binding "expires")))
+    `((id . ,(if cap-val (compact-uri cap-val) "unknown"))
+      (label . ,label-val)
+      (revoked . ,(and revoked-val (string=? revoked-val "true")))
+      (expires . ,expires-val))))
+
+;;; --------------------------------------------------------------------
+;;; Capability Query Helpers
+;;; --------------------------------------------------------------------
+
+(define (query-cap-details store cap-graph cap-id)
+  "Query detailed information about a capability."
+  (let* ((sparql (format #f "SELECT ?created ?parent ?expires ?revoked ?label
+FROM <~a>
+WHERE {
+  <~a> a <~a> .
+  OPTIONAL { <~a> <~a> ?created }
+  OPTIONAL { <~a> <~a> ?parent }
+  OPTIONAL { <~a> <~a> ?expires }
+  OPTIONAL { <~a> <~a> ?revoked }
+  OPTIONAL { <~a> <~a> ?label }
+}" cap-graph cap-id (xm-uri "Capability")
+   cap-id dcterms:created
+   cap-id (xm-uri "parent")
+   cap-id (xm-uri "expiresAt")
+   cap-id (xm-uri "revoked")
+   cap-id rdfs:label))
+         (json-result (store-query store sparql))
+         (parsed (json-string->scm json-result))
+         (bindings (get-sparql-bindings parsed)))
+    (if (null? bindings)
+        '()
+        (let ((b (car bindings)))
+          `((created . ,(get-binding-value b "created"))
+            (parent . ,(get-binding-value b "parent"))
+            (expires . ,(get-binding-value b "expires"))
+            (revoked . ,(let ((r (get-binding-value b "revoked")))
+                          (and r (string=? r "true"))))
+            (label . ,(get-binding-value b "label")))))))
+
+(define (query-cap-graphs store cap-graph cap-id)
+  "Query graphs granted by a capability."
+  (let* ((sparql (format #f "SELECT ?graph
+FROM <~a>
+WHERE {
+  <~a> <~a> ?graph
+}" cap-graph cap-id (xm-uri "grantsAccess")))
+         (json-result (store-query store sparql))
+         (parsed (json-string->scm json-result))
+         (bindings (get-sparql-bindings parsed)))
+    (map (lambda (b) (get-binding-value b "graph")) bindings)))
+
+(define (query-cap-permissions store cap-graph cap-id)
+  "Query permissions granted by a capability."
+  (let* ((sparql (format #f "SELECT ?perm
+FROM <~a>
+WHERE {
+  <~a> <~a> ?perm
+}" cap-graph cap-id (xm-uri "hasPermission")))
+         (json-result (store-query store sparql))
+         (parsed (json-string->scm json-result))
+         (bindings (get-sparql-bindings parsed)))
+    (map (lambda (b)
+           (let ((p (get-binding-value b "perm")))
+             (if p (string->symbol p) 'unknown)))
+         bindings)))
+
+;;; --------------------------------------------------------------------
+;;; Cascade Revoke Helper
+;;; --------------------------------------------------------------------
+
+(define (revoke-derived-capabilities store cap-graph parent-cap-id)
+  "Revoke all capabilities derived from a parent capability.
+   Returns the count of revoked derived capabilities."
+  ;; Find all capabilities with this parent
+  (let* ((sparql (format #f "SELECT ?cap
+FROM <~a>
+WHERE {
+  ?cap <~a> <~a> .
+  FILTER NOT EXISTS { ?cap <~a> \"true\" }
+}" cap-graph (xm-uri "parent") parent-cap-id (xm-uri "revoked")))
+         (json-result (store-query store sparql))
+         (parsed (json-string->scm json-result))
+         (bindings (get-sparql-bindings parsed))
+         (timestamp (current-iso-timestamp)))
+    ;; Revoke each derived capability
+    (let loop ((bindings bindings) (count 0))
+      (if (null? bindings)
+          count
+          (let ((cap-id (get-binding-value (car bindings) "cap")))
+            (when cap-id
+              ;; Mark as revoked
+              (store-insert-quad store cap-id (xm-uri "revoked") "true" #:graph cap-graph)
+              (store-insert-quad store cap-id (xm-uri "revokedAt") timestamp #:graph cap-graph)
+              ;; Recursively revoke children
+              (revoke-derived-capabilities store cap-graph cap-id))
+            (loop (cdr bindings) (+ count 1)))))))

@@ -604,6 +604,219 @@ pub unsafe extern "C" fn xm_store_is_empty(store: *mut XmStore) -> c_int {
 }
 
 // ============================================================================
+// Named Graph Operations
+// ============================================================================
+
+/// List all named graphs in the store, returning JSON array of URIs.
+///
+/// # Safety
+/// - `store` must be a valid store pointer
+/// - `buf` must point to a buffer of at least `buf_len` bytes
+/// - Returns bytes written, or negative error code
+#[no_mangle]
+pub unsafe extern "C" fn xm_store_list_graphs(
+    store: *mut XmStore,
+    buf: *mut c_char,
+    buf_len: size_t,
+) -> c_int {
+    if store.is_null() || buf.is_null() {
+        return XmError::NullPointer as c_int;
+    }
+
+    let store = &(*store).store;
+    let mut graphs: Vec<String> = Vec::new();
+
+    for graph_result in store.named_graphs() {
+        match graph_result {
+            Ok(graph) => {
+                if let oxigraph::model::NamedOrBlankNode::NamedNode(n) = graph {
+                    graphs.push(n.into_string());
+                }
+            }
+            Err(_) => return XmError::StoreError as c_int,
+        }
+    }
+
+    let json_str = match serde_json::to_string(&graphs) {
+        Ok(s) => s,
+        Err(_) => return XmError::SerializationError as c_int,
+    };
+
+    let json_bytes = json_str.as_bytes();
+    if json_bytes.len() >= buf_len {
+        return XmError::BufferTooSmall as c_int;
+    }
+
+    ptr::copy_nonoverlapping(json_bytes.as_ptr(), buf as *mut u8, json_bytes.len());
+    *buf.add(json_bytes.len()) = 0;
+
+    json_bytes.len() as c_int
+}
+
+/// Check if a named graph exists in the store.
+///
+/// # Safety
+/// - `store` must be a valid store pointer
+/// - `graph` must be a valid null-terminated URI string
+/// - Returns 1 if exists, 0 if not, negative on error
+#[no_mangle]
+pub unsafe extern "C" fn xm_store_graph_exists(
+    store: *mut XmStore,
+    graph: *const c_char,
+) -> c_int {
+    if store.is_null() || graph.is_null() {
+        return XmError::NullPointer as c_int;
+    }
+
+    let store = &(*store).store;
+    let graph_str = match CStr::from_ptr(graph).to_str() {
+        Ok(s) => s,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    let graph_ref = match NamedNodeRef::new(graph_str) {
+        Ok(n) => n,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    match store.contains_named_graph(graph_ref) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => XmError::StoreError as c_int,
+    }
+}
+
+/// Create an empty named graph (inserts graph name into store).
+///
+/// # Safety
+/// - `store` must be a valid store pointer
+/// - `graph` must be a valid null-terminated URI string
+/// - Returns 0 on success, negative on error
+#[no_mangle]
+pub unsafe extern "C" fn xm_store_create_graph(
+    store: *mut XmStore,
+    graph: *const c_char,
+) -> c_int {
+    if store.is_null() || graph.is_null() {
+        return XmError::NullPointer as c_int;
+    }
+
+    let store = &(*store).store;
+    let graph_str = match CStr::from_ptr(graph).to_str() {
+        Ok(s) => s,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    let graph_ref = match NamedNodeRef::new(graph_str) {
+        Ok(n) => n,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    match store.insert_named_graph(graph_ref) {
+        Ok(_) => XmError::Ok as c_int,
+        Err(_) => XmError::StoreError as c_int,
+    }
+}
+
+/// Drop a named graph and all its triples.
+///
+/// # Safety
+/// - `store` must be a valid store pointer
+/// - `graph` must be a valid null-terminated URI string
+/// - Returns 0 on success, negative on error
+#[no_mangle]
+pub unsafe extern "C" fn xm_store_drop_graph(
+    store: *mut XmStore,
+    graph: *const c_char,
+) -> c_int {
+    if store.is_null() || graph.is_null() {
+        return XmError::NullPointer as c_int;
+    }
+
+    let store = &(*store).store;
+    let graph_str = match CStr::from_ptr(graph).to_str() {
+        Ok(s) => s,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    let graph_ref = match NamedNodeRef::new(graph_str) {
+        Ok(n) => n,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    match store.remove_named_graph(graph_ref) {
+        Ok(_) => XmError::Ok as c_int,
+        Err(_) => XmError::StoreError as c_int,
+    }
+}
+
+/// Clear all triples in a named graph (graph name remains).
+///
+/// # Safety
+/// - `store` must be a valid store pointer
+/// - `graph` must be a valid null-terminated URI string
+/// - Returns 0 on success, negative on error
+#[no_mangle]
+pub unsafe extern "C" fn xm_store_clear_graph(
+    store: *mut XmStore,
+    graph: *const c_char,
+) -> c_int {
+    if store.is_null() || graph.is_null() {
+        return XmError::NullPointer as c_int;
+    }
+
+    let store = &(*store).store;
+    let graph_str = match CStr::from_ptr(graph).to_str() {
+        Ok(s) => s,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    let graph_ref = match NamedNodeRef::new(graph_str) {
+        Ok(n) => n,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    match store.clear_graph(graph_ref) {
+        Ok(_) => XmError::Ok as c_int,
+        Err(_) => XmError::StoreError as c_int,
+    }
+}
+
+/// Count quads in a specific named graph.
+///
+/// # Safety
+/// - `store` must be a valid store pointer
+/// - `graph` must be a valid null-terminated URI string
+/// - Returns count, or negative on error
+#[no_mangle]
+pub unsafe extern "C" fn xm_store_graph_count(
+    store: *mut XmStore,
+    graph: *const c_char,
+) -> c_int {
+    if store.is_null() || graph.is_null() {
+        return XmError::NullPointer as c_int;
+    }
+
+    let store = &(*store).store;
+    let graph_str = match CStr::from_ptr(graph).to_str() {
+        Ok(s) => s,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    let graph_ref = match NamedNodeRef::new(graph_str) {
+        Ok(n) => n,
+        Err(_) => return XmError::InvalidUtf8 as c_int,
+    };
+
+    let graph_name = GraphNameRef::NamedNode(graph_ref);
+    let count = store
+        .quads_for_pattern(None, None, None, Some(graph_name))
+        .count();
+
+    count as c_int
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 

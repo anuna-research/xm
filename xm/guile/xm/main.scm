@@ -17,6 +17,11 @@
   #:use-module (xm cli session)
   #:use-module (xm cli cap)
   #:use-module (xm cli schema)
+  #:use-module (xm cli graph)
+  #:use-module (xm cli store-cmd)
+  #:use-module (xm cli io)
+  #:use-module (xm cli sync)
+  #:use-module (xm cli daemon)
   #:use-module (xm store)
   #:export (main))
 
@@ -37,6 +42,7 @@ Commands:
   link       Manage links between nodes
   query      Query the knowledge graph (sparql, nodes, backlinks, path)
   schema     Introspect schema (classes, predicates, describe)
+  graph      Manage named graphs (list, create, drop, stats)
   session    Manage agent sessions
   cap        Manage capabilities
   import     Import knowledge from files
@@ -44,6 +50,7 @@ Commands:
   subscribe  Subscribe to real-time changes
   sync       Synchronize with remote xm daemon
   daemon     Manage the xm daemon
+  store      Store management (compact, backup, restore, info)
   eval       Run evaluations (locomo benchmark)
 
 Global Options:
@@ -184,6 +191,110 @@ Examples:
   xm schema predicates
   xm schema describe prov:Entity
 ")
+    (graph . "
+xm graph - Manage named graphs
+
+Usage:
+  xm graph <subcommand> [options]
+
+Subcommands:
+  list       List all named graphs
+  create     Create a new named graph
+  drop       Drop a named graph and its triples
+  stats      Show detailed graph statistics
+
+Options:
+  -v, --verbose    Show triple counts (for list)
+  -f, --force      Skip confirmation (for drop)
+  -n, --dry-run    Show what would be deleted (for drop)
+
+Examples:
+  xm graph list
+  xm graph list --verbose
+  xm graph create xm:graph/project/acme-api
+  xm graph drop xm:graph/project/old-project --force
+  xm graph stats xm:graph/public
+")
+    (store . "
+xm store - Store management commands
+
+Usage:
+  xm store <subcommand> [options]
+
+Subcommands:
+  compact    Compact and optimize the store
+  backup     Backup the store to a file
+  restore    Restore the store from a backup
+  info       Show store information and statistics
+
+Options:
+  -o, --output FILE    Output file for backup
+  --from FILE          Input file for restore
+  --merge              Merge with existing data (restore only)
+  -f, --force          Skip confirmation prompt
+  --format FORMAT      RDF format: nquads, turtle, ntriples
+
+Examples:
+  xm store info
+  xm store compact
+  xm store backup -o backup.nq
+  xm store restore --from backup.nq
+  xm store restore --from backup.nq --merge
+")
+    (import . "
+xm import - Import RDF data from files
+
+Usage:
+  xm import <file> [options]
+
+Options:
+  -g, --graph URI      Target graph (default: xm:graph/public)
+  -f, --format FORMAT  Input format: turtle, ntriples, nquads (auto-detect)
+  --replace            Replace graph contents instead of merging
+
+Examples:
+  xm import data.ttl
+  xm import data.nq -g xm:graph/project/myproject
+  xm import backup.nt --replace
+")
+    (export . "
+xm export - Export RDF data to files
+
+Usage:
+  xm export [options]
+
+Options:
+  -g, --graph URI      Source graph (default: all graphs)
+  -o, --output FILE    Output file (default: stdout)
+  -f, --format FORMAT  Output format: turtle, ntriples, nquads (default: turtle)
+
+Examples:
+  xm export                           # Export all to stdout as Turtle
+  xm export -o backup.nq -f nquads    # Full backup with graphs
+  xm export -g xm:graph/public -o public.ttl
+")
+    (daemon . "
+xm daemon - Manage the xm daemon
+
+Usage:
+  xm daemon <subcommand> [options]
+
+Subcommands:
+  start      Start the daemon
+  stop       Stop the daemon
+  restart    Restart the daemon
+  status     Show daemon status
+
+Options (start):
+  --foreground, -F    Run in foreground (don't background)
+
+Examples:
+  xm daemon start
+  xm daemon start --foreground
+  xm daemon status
+  xm daemon stop
+  xm daemon restart
+")
     (eval . "
 xm eval - Run evaluations and benchmarks
 
@@ -319,16 +430,26 @@ Examples:
                   (handle-schema-command subcommand
                                          (acons 'positional positional opts)
                                          global-opts store cap-ref))
+                 ((graph)
+                  (handle-graph-command subcommand
+                                        (acons 'positional positional opts)
+                                        global-opts store cap-ref))
                  ((import)
-                  (handle-import-command opts global-opts store cap-ref))
+                  (handle-import-command (acons 'positional positional opts)
+                                         global-opts store cap-ref))
                  ((export)
-                  (handle-export-command opts global-opts store cap-ref))
+                  (handle-export-command (acons 'positional positional opts)
+                                         global-opts store cap-ref))
                  ((subscribe)
                   (handle-subscribe-command opts global-opts store cap-ref))
                  ((sync)
                   (handle-sync-command opts global-opts store cap-ref))
                  ((daemon)
                   (handle-daemon-command subcommand opts global-opts))
+                 ((store)
+                  (handle-store-command subcommand
+                                        (acons 'positional positional opts)
+                                        global-opts store cap-ref))
                  ((eval)
                   (handle-eval-command subcommand
                                        (acons 'positional positional opts)
@@ -348,46 +469,54 @@ Examples:
 ;;; Command Handlers (Placeholders for commands not yet implemented)
 ;;; --------------------------------------------------------------------
 
-(define (handle-import-command opts global-opts gatekeeper cap-ref)
-  "Handle import command."
-  (output-result '((message . "import - not yet implemented")) global-opts)
-  0)
-
-(define (handle-export-command opts global-opts gatekeeper cap-ref)
-  "Handle export command."
-  (output-result '((message . "export - not yet implemented")) global-opts)
-  0)
-
-(define (handle-subscribe-command opts global-opts gatekeeper cap-ref)
-  "Handle subscribe command."
-  (output-result '((message . "subscribe - not yet implemented")) global-opts)
-  0)
-
-(define (handle-sync-command opts global-opts gatekeeper cap-ref)
-  "Handle sync command."
-  (output-result '((message . "sync - not yet implemented")) global-opts)
-  0)
-
 (define (handle-daemon-command subcommand opts global-opts)
   "Handle daemon subcommands."
-  (case subcommand
-    ((start)
-     (output-result '((message . "daemon start - not yet implemented")) global-opts))
-    ((stop)
-     (output-result '((message . "daemon stop - not yet implemented")) global-opts))
-    ((restart)
-     (output-result '((message . "daemon restart - not yet implemented")) global-opts))
-    ((status)
-     (output-result '((status . "not running")
-                      (message . "daemon status - not yet implemented"))
-                    global-opts))
-    (else
-     (output-error "UNKNOWN_SUBCOMMAND"
-                   (format #f "Unknown daemon subcommand: ~a" subcommand)
-                   "Available: start, stop, restart, status"
-                   global-opts)
-     2))
-  0)
+  (catch #t
+    (lambda ()
+      (case subcommand
+        ((start)
+         (let* ((foreground (or (assoc-ref opts "foreground")
+                                (assoc-ref opts "F")))
+                (result (daemon-start #:foreground foreground)))
+           (if (assoc-ref global-opts "json")
+               (output-result `((ok . #t) (data . ,result)) global-opts)
+               (format #t "Daemon started (PID: ~a)\n"
+                       (assoc-ref result 'pid)))
+           0))
+        ((stop)
+         (let ((result (daemon-stop)))
+           (if (assoc-ref global-opts "json")
+               (output-result `((ok . #t) (data . ,result)) global-opts)
+               (format #t "Daemon stopped\n"))
+           0))
+        ((restart)
+         (let ((result (daemon-restart)))
+           (if (assoc-ref global-opts "json")
+               (output-result `((ok . #t) (data . ,result)) global-opts)
+               (format #t "Daemon restarted (PID: ~a)\n"
+                       (assoc-ref result 'pid)))
+           0))
+        ((status)
+         (let ((result (daemon-status)))
+           (if (assoc-ref global-opts "json")
+               (output-result `((ok . #t) (data . ,result)) global-opts)
+               (if (assoc-ref result 'running)
+                   (format #t "Daemon is running (PID: ~a)\n"
+                           (assoc-ref result 'pid))
+                   (format #t "Daemon is not running\n")))
+           0))
+        (else
+         (output-error "UNKNOWN_SUBCOMMAND"
+                       (format #f "Unknown daemon subcommand: ~a" subcommand)
+                       "Available: start, stop, restart, status"
+                       global-opts)
+         2)))
+    (lambda (key . args)
+      (output-error "DAEMON_ERROR"
+                    (format #f "Daemon error: ~a" (car args))
+                    #f
+                    global-opts)
+      1)))
 
 (define (handle-eval-command subcommand opts global-opts store)
   "Handle eval subcommands.

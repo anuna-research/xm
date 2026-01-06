@@ -36,6 +36,14 @@
             store-count
             store-empty?
 
+            ;; Named graph operations
+            store-list-graphs
+            store-graph-exists?
+            store-create-graph
+            store-drop-graph
+            store-clear-graph
+            store-graph-count
+
             ;; UUID generation
             generate-uuid
 
@@ -174,6 +182,37 @@
   (foreign-library-function libxm-ffi "xm_store_is_empty"
                             #:return-type int
                             #:arg-types (list '*)))
+
+;; Named graph operations
+(define ffi-store-list-graphs
+  (foreign-library-function libxm-ffi "xm_store_list_graphs"
+                            #:return-type int
+                            #:arg-types (list '* '* size_t)))
+
+(define ffi-store-graph-exists
+  (foreign-library-function libxm-ffi "xm_store_graph_exists"
+                            #:return-type int
+                            #:arg-types (list '* '*)))
+
+(define ffi-store-create-graph
+  (foreign-library-function libxm-ffi "xm_store_create_graph"
+                            #:return-type int
+                            #:arg-types (list '* '*)))
+
+(define ffi-store-drop-graph
+  (foreign-library-function libxm-ffi "xm_store_drop_graph"
+                            #:return-type int
+                            #:arg-types (list '* '*)))
+
+(define ffi-store-clear-graph
+  (foreign-library-function libxm-ffi "xm_store_clear_graph"
+                            #:return-type int
+                            #:arg-types (list '* '*)))
+
+(define ffi-store-graph-count
+  (foreign-library-function libxm-ffi "xm_store_graph_count"
+                            #:return-type int
+                            #:arg-types (list '* '*)))
 
 ;;; --------------------------------------------------------------------
 ;;; Store Type
@@ -380,6 +419,63 @@
   (let ((result (ffi-store-is-empty (store-ptr store))))
     (check-result result)
     (= result 1)))
+
+;;; --------------------------------------------------------------------
+;;; Named Graph Operations
+;;; --------------------------------------------------------------------
+
+(define* (store-list-graphs store #:key (buffer-size (* 1024 1024)))
+  "List all named graphs in the store.
+   Returns a list of graph URI strings."
+  (let* ((buffer (make-bytevector buffer-size 0))
+         (buffer-ptr (bytevector->pointer buffer))
+         (result (ffi-store-list-graphs (store-ptr store)
+                                         buffer-ptr buffer-size)))
+    (check-result result)
+    (let ((json-str (pointer->string buffer-ptr)))
+      (if (string=? json-str "[]")
+          '()
+          (json-string->scm json-str)))))
+
+(define (store-graph-exists? store graph)
+  "Check if a named graph exists in the store.
+   GRAPH is the graph URI string."
+  (let* ((g-ptr (string->pointer graph))
+         (result (ffi-store-graph-exists (store-ptr store) g-ptr)))
+    (check-result result)
+    (= result 1)))
+
+(define (store-create-graph store graph)
+  "Create an empty named graph in the store.
+   GRAPH is the graph URI string."
+  (let* ((g-ptr (string->pointer graph))
+         (result (ffi-store-create-graph (store-ptr store) g-ptr)))
+    (check-result result)
+    #t))
+
+(define (store-drop-graph store graph)
+  "Drop a named graph and all its triples.
+   GRAPH is the graph URI string."
+  (let* ((g-ptr (string->pointer graph))
+         (result (ffi-store-drop-graph (store-ptr store) g-ptr)))
+    (check-result result)
+    #t))
+
+(define (store-clear-graph store graph)
+  "Clear all triples in a named graph (graph name remains).
+   GRAPH is the graph URI string."
+  (let* ((g-ptr (string->pointer graph))
+         (result (ffi-store-clear-graph (store-ptr store) g-ptr)))
+    (check-result result)
+    #t))
+
+(define (store-graph-count store graph)
+  "Count the number of quads in a specific named graph.
+   GRAPH is the graph URI string."
+  (let* ((g-ptr (string->pointer graph))
+         (result (ffi-store-graph-count (store-ptr store) g-ptr)))
+    (check-result result)
+    result))
 
 ;;; --------------------------------------------------------------------
 ;;; UUID Generation
