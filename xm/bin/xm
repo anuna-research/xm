@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# xm - Cross Memory CLI wrapper
+#
+# This script sets up the Guile environment and invokes the xm CLI.
+
+set -e
+
+# Determine script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+XM_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Use Homebrew Guile installation with Goblins support
+HOOT_PREFIX="${HOOT_PREFIX:-/opt/homebrew}"
+
+# Set Guile load path to include xm modules and Goblins
+export GUILE_LOAD_PATH="${XM_DIR}/guile:${HOOT_PREFIX}/share/guile/site/3.0:${GUILE_LOAD_PATH:-}"
+export GUILE_LOAD_COMPILED_PATH="${HOOT_PREFIX}/lib/guile/3.0/site-ccache:${GUILE_LOAD_COMPILED_PATH:-}"
+
+# Set library path for FFI
+export XM_LIB_PATH="${XM_DIR}/target/release"
+
+# On macOS, also set DYLD_LIBRARY_PATH
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    export DYLD_LIBRARY_PATH="${XM_LIB_PATH}:${DYLD_LIBRARY_PATH:-}"
+fi
+
+# On Linux, set LD_LIBRARY_PATH
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    export LD_LIBRARY_PATH="${XM_LIB_PATH}:${LD_LIBRARY_PATH:-}"
+fi
+
+# Run xm via Guile
+exec guile -e '(xm main)' -s "${XM_DIR}/guile/xm/main.scm" -- "$@"

@@ -1,0 +1,24 @@
+[package]
+name = "xm-oxigraph-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "C FFI bindings for Oxigraph, enabling Guile Scheme integration"
+
+[lib]
+name = "xm_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+oxigraph = "0.5"
+libc = "0.2"
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+
+[build-dependencies]
+cbindgen = "0.27"
+
+[[bin]]
+name = "xm-store-test"
+path = "src/bin/test_store.rs"
