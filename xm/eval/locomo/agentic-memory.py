@@ -29,6 +29,7 @@ import sys
 import re
 import time
 import string
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -1624,7 +1625,7 @@ Just return the label CORRECT or WRONG in a json format with the key as "label".
 # Main Evaluation
 # ============================================================================
 
-def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1, extract_implicit: bool = False):
+def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1, extract_implicit: bool = False, shuffle: bool = False):
     """Run the full agentic memory evaluation."""
 
     global MEMORY_STORE
@@ -1639,6 +1640,8 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         print(f"  Workers: {workers} (parallel mode)")
     if extract_implicit:
         print(f"  LLM Fact Extraction: enabled")
+    if shuffle:
+        print(f"  Question order: shuffled")
     print(f"{'='*70}")
 
     # Load dataset
@@ -1666,7 +1669,10 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     print("="*50)
     print("\nThe agent will query its memories to answer questions.\n")
 
-    qa_pairs = [qa for qa in conv["qa"] if qa["category"] != 5][:limit]
+    all_qa = [qa for qa in conv["qa"] if qa["category"] != 5]
+    if shuffle:
+        random.shuffle(all_qa)
+    qa_pairs = all_qa[:limit]
     # Results: (category, llm_judge_score, f1_score)
     results: List[Tuple[int, int, float]] = []
     # Detailed results for logging
@@ -1828,6 +1834,7 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         "api_provider": API_PROVIDER,
         "limit": limit,
         "workers": workers,
+        "shuffle": shuffle,
         "conversation_id": conv["sample_id"],
         "memory_stats": ingest_stats,
         "summary": {
@@ -1911,6 +1918,7 @@ def main():
     parser.add_argument("--ingest-only", action="store_true", help="Only ingest, don't run QA (for schema inspection)")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers for QA phase (default: 1)")
     parser.add_argument("--extract-implicit", action="store_true", help="Run LLM-based implicit fact extraction after ingestion")
+    parser.add_argument("--shuffle", action="store_true", help="Shuffle questions before sampling (for fairer --limit sampling)")
 
     args = parser.parse_args()
 
@@ -1933,7 +1941,8 @@ def main():
             show_schema=args.show_schema,
             store_path=args.store,
             workers=args.workers,
-            extract_implicit=args.extract_implicit
+            extract_implicit=args.extract_implicit,
+            shuffle=args.shuffle
         )
 
 
