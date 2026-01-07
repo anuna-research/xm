@@ -1139,6 +1139,57 @@ Use extract_fact for each implicit fact you find. Only extract facts that add NE
 # Agentic Ingestion
 # ============================================================================
 
+# ============================================================================
+# EDU (Elementary Discourse Unit) Ingestion Prompt
+# Based on EMem paper: https://arxiv.org/html/2511.17208
+# ============================================================================
+
+EDU_INGESTION_SYSTEM = """You are an EDU (Elementary Discourse Unit) extraction agent.
+
+Extract SELF-CONTAINED event statements from conversations. Each EDU should be complete enough to answer questions WITHOUT needing other memories.
+
+**EDU PRINCIPLES:**
+1. Each memory is a COMPLETE, STANDALONE statement
+2. Include WHO, WHAT, WHEN, WHERE in a SINGLE statement
+3. Resolve relative dates to ABSOLUTE dates using session date
+4. Use full names (not pronouns)
+5. Include specific details (names, numbers, titles)
+
+**GOOD EDUs (self-contained):**
+- "Melanie went camping in the mountains on 20 June 2023 with her family"
+- "Caroline is a transgender woman who moved from Sweden 4 years ago"
+- "Melanie has been married for 15 years as of October 2023"
+- "Melanie has a dog named Luna and a cat named Oliver"
+- "Caroline has a guinea pig named Oscar"
+- "Melanie's kids love dinosaurs and enjoyed the museum dinosaur exhibit on 5 July 2023"
+
+**BAD EDUs (fragmented - AVOID THESE):**
+- "She went camping" (who? when?)
+- "They have pets" (who? what pets?)
+- "The kids loved it" (loved what? when?)
+
+**TEMPORAL RESOLUTION - CRITICAL:**
+Session date is in the header (e.g., "Session 5 (1:36 pm on 2 July 2023)").
+Convert ALL relative dates:
+- "yesterday" → calculate actual date
+- "last Saturday" → calculate actual date
+- "last year" → calculate year
+- "next month" → calculate month
+
+**FOR EACH EDU, store with:**
+- memory_type: "edu" (or "event" for dated activities)
+- content: The complete self-contained statement
+- subject: Main person this is about
+- timestamp: Absolute date if applicable
+
+Example: If session is "25 May 2023" and someone says "I ran a race last Saturday":
+→ Store: "Melanie ran a charity race on 20 May 2023" with timestamp "20 May 2023"
+"""
+
+# ============================================================================
+# Standard Ingestion Prompt (fragmented facts)
+# ============================================================================
+
 INGESTION_SYSTEM = """You are a memory agent. Your task is to read conversation sessions and store important memories using the provided tools.
 
 For each conversation session, identify and store:
@@ -1230,7 +1281,7 @@ Store specific names, titles, and details - not just general categories:
 Use the source field to track which dialog turn (e.g., "D1:3") the information came from."""
 
 
-def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: bool = True) -> int:
+def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: bool = True, edu_mode: bool = False) -> int:
     """Have the agent ingest a single session."""
 
     # Format session for the agent
@@ -1256,7 +1307,8 @@ def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: boo
 
     # Run agent loop
     for i in range(25):  # Max 25 tool calls per session (increased for thorough extraction)
-        response = call_llm_with_tools(messages, INGESTION_TOOLS, INGESTION_SYSTEM, max_tokens=1500)
+        system_prompt = EDU_INGESTION_SYSTEM if edu_mode else INGESTION_SYSTEM
+        response = call_llm_with_tools(messages, INGESTION_TOOLS, system_prompt, max_tokens=1500)
 
         content = response.get("content", [])
         stop_reason = response.get("stop_reason", "")
@@ -1296,7 +1348,7 @@ def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: boo
     return memories_created
 
 
-def ingest_conversation_with_agent(conv: Dict, verbose: bool = True, extract_implicit: bool = False) -> Dict:
+def ingest_conversation_with_agent(conv: Dict, verbose: bool = True, extract_implicit: bool = False, edu_mode: bool = False) -> Dict:
     """Have the agent ingest an entire conversation."""
 
     conv_id = conv["sample_id"]
@@ -1336,7 +1388,7 @@ def ingest_conversation_with_agent(conv: Dict, verbose: bool = True, extract_imp
             "turns": session_turns
         }
 
-        memories = ingest_session_with_agent(session_data, session_idx, verbose)
+        memories = ingest_session_with_agent(session_data, session_idx, verbose, edu_mode=edu_mode)
         total_memories += memories
 
         if verbose:
@@ -1625,7 +1677,7 @@ Just return the label CORRECT or WRONG in a json format with the key as "label".
 # Main Evaluation
 # ============================================================================
 
-def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1, extract_implicit: bool = False, shuffle: bool = False):
+def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1, extract_implicit: bool = False, shuffle: bool = False, edu_mode: bool = False):
     """Run the full agentic memory evaluation."""
 
     global MEMORY_STORE
@@ -1638,6 +1690,8 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         print(f"  Store: {store_path}")
     if workers > 1:
         print(f"  Workers: {workers} (parallel mode)")
+    if edu_mode:
+        print(f"  Ingestion mode: EDU (self-contained units)")
     if extract_implicit:
         print(f"  LLM Fact Extraction: enabled")
     if shuffle:
@@ -1657,7 +1711,7 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     print("\nThe agent will read the conversation and decide")
     print("what to remember and how to structure it.\n")
 
-    ingest_stats = ingest_conversation_with_agent(conv, verbose, extract_implicit=extract_implicit)
+    ingest_stats = ingest_conversation_with_agent(conv, verbose, extract_implicit=extract_implicit, edu_mode=edu_mode)
 
     # Show schema if requested
     if show_schema:
@@ -1835,6 +1889,7 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         "limit": limit,
         "workers": workers,
         "shuffle": shuffle,
+        "edu_mode": edu_mode,
         "conversation_id": conv["sample_id"],
         "memory_stats": ingest_stats,
         "summary": {
@@ -1919,6 +1974,7 @@ def main():
     parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers for QA phase (default: 1)")
     parser.add_argument("--extract-implicit", action="store_true", help="Run LLM-based implicit fact extraction after ingestion")
     parser.add_argument("--shuffle", action="store_true", help="Shuffle questions before sampling (for fairer --limit sampling)")
+    parser.add_argument("--edu", action="store_true", help="Use EDU (Elementary Discourse Unit) ingestion mode - self-contained facts")
 
     args = parser.parse_args()
 
@@ -1942,7 +1998,8 @@ def main():
             store_path=args.store,
             workers=args.workers,
             extract_implicit=args.extract_implicit,
-            shuffle=args.shuffle
+            shuffle=args.shuffle,
+            edu_mode=args.edu
         )
 
 
