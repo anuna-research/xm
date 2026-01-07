@@ -61,17 +61,39 @@
        (error "Unknown query type" sparql)))))
 
 (define (detect-query-type sparql)
-  "Detect the type of SPARQL query."
-  (let ((upper (string-upcase (string-trim sparql))))
+  "Detect the type of SPARQL query.
+   Handles PREFIX/BASE declarations at the start of the query."
+  (let* ((upper (string-upcase (string-trim sparql)))
+         ;; Skip PREFIX and BASE declarations to find actual query type
+         (body (skip-sparql-prologue upper)))
     (cond
-     ((string-prefix? "SELECT" upper) 'select)
-     ((string-prefix? "ASK" upper) 'ask)
-     ((string-prefix? "CONSTRUCT" upper) 'construct)
-     ((string-prefix? "DESCRIBE" upper) 'describe)
-     ((string-prefix? "INSERT" upper) 'insert)
-     ((string-prefix? "DELETE" upper) 'delete)
-     ((string-prefix? "WITH" upper) 'update)  ; WITH ... DELETE/INSERT
+     ((string-prefix? "SELECT" body) 'select)
+     ((string-prefix? "ASK" body) 'ask)
+     ((string-prefix? "CONSTRUCT" body) 'construct)
+     ((string-prefix? "DESCRIBE" body) 'describe)
+     ((string-prefix? "INSERT" body) 'insert)
+     ((string-prefix? "DELETE" body) 'delete)
+     ((string-prefix? "WITH" body) 'update)  ; WITH ... DELETE/INSERT
      (else 'unknown))))
+
+(define (skip-sparql-prologue sparql)
+  "Skip PREFIX and BASE declarations at the start of a SPARQL query.
+   Returns the remaining query body."
+  (let ((trimmed (string-trim sparql)))
+    (cond
+     ((string-prefix? "PREFIX" trimmed)
+      ;; Skip to end of PREFIX declaration (after the URI)
+      (let ((gt-pos (string-index trimmed #\>)))
+        (if gt-pos
+            (skip-sparql-prologue (substring trimmed (+ gt-pos 1)))
+            trimmed)))
+     ((string-prefix? "BASE" trimmed)
+      ;; Skip to end of BASE declaration (after the URI)
+      (let ((gt-pos (string-index trimmed #\>)))
+        (if gt-pos
+            (skip-sparql-prologue (substring trimmed (+ gt-pos 1)))
+            trimmed)))
+     (else trimmed))))
 
 (define (add-from-clauses sparql allowed-graphs)
   "Add FROM <graph> clauses to a read query.
