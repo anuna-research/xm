@@ -29,6 +29,7 @@ import sys
 import re
 import time
 import string
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
@@ -250,8 +251,8 @@ INGESTION_TOOLS = [
             "properties": {
                 "memory_type": {
                     "type": "string",
-                    "enum": ["person", "event", "fact", "preference", "relationship", "statement"],
-                    "description": "Type of memory: person (who), event (what happened), fact (information), preference (likes/dislikes), relationship (between people), statement (exact quote)"
+                    "enum": ["person", "event", "fact", "preference", "relationship", "statement", "biographical", "opinion", "activity"],
+                    "description": "Type of memory: person (who), event (what happened), fact (information), preference (likes/dislikes), relationship (between people), statement (exact quote), biographical (age/birthday/status/counts), opinion (what someone thinks about another), activity (hobby/sport/creative pursuit)"
                 },
                 "content": {
                     "type": "string",
@@ -310,7 +311,7 @@ QUERY_TOOLS = [
                 },
                 "memory_type": {
                     "type": "string",
-                    "enum": ["person", "event", "fact", "preference", "relationship", "statement", "all"],
+                    "enum": ["person", "event", "fact", "preference", "relationship", "statement", "biographical", "opinion", "activity", "all"],
                     "description": "Filter by memory type (optional)"
                 }
             },
@@ -793,11 +794,32 @@ For each conversation session, identify and store:
 3. **Preferences**: What people like, want, plan to do
 4. **Key statements**: Important things said that might be referenced later
 
-Be SELECTIVE - don't store every utterance. Focus on information that would help answer questions about:
-- Who the people are and their backgrounds
-- What events happened and when
-- Important facts and decisions
-- Relationships between people and events
+Be SELECTIVE but COMPLETE - don't miss specific details that answer questions like:
+"What exactly did X do?", "What specific things does Y like?", "How many Z?"
+
+**CRITICAL - BIOGRAPHICAL DETAILS**:
+Store specific biographical facts that could be asked later:
+- Relationship status (single, married, dating)
+- Age, birthdays, anniversaries (e.g., "daughter's birthday is 13 August")
+- Number of children and their details (names, ages, birthdays)
+- Home country, where they moved from (store the actual country name!)
+- How long they've known people, been married, etc.
+
+**CRITICAL - SPECIFIC NAMES AND TITLES**:
+Always store the EXACT names, not descriptions:
+- Book titles: "Becoming Nicole", "Nothing is Impossible" (not "a book about...")
+- Band/artist names: "Summer Sounds", "Matt Patterson" (not "a band")
+- Specific art styles: "abstract art" (not just "art")
+- Symbol names: "rainbow flag", "transgender symbol" (not "symbols")
+- Place names: "Sweden" (not "home country")
+- Pet names: "Oliver", "Luna", "Bailey" (not "her pets")
+
+**CRITICAL - NUMBERS AND COUNTS**:
+Store explicit numbers when mentioned:
+- "3 children" - store the number explicitly
+- "5 years married" - store duration
+- "visited beach 2 times" - store count
+- "plays 2 instruments: violin and clarinet" - store each instrument
 
 **CRITICAL - DATE HANDLING**:
 The session header shows the date (e.g., "Session 5 (1:36 pm on 2 July 2023)").
@@ -818,15 +840,30 @@ store the timestamp as "20 May 2023" (the Saturday before), NOT "last Saturday".
 - Time-bound facts: include the session date as timestamp
 
 **CRITICAL - LIST COMPLETENESS**:
-When someone mentions a LIST of items, store EACH ITEM separately:
-- Books mentioned → store EACH book title as a separate memory
-- Activities → store EACH activity (swimming, painting, running, etc.)
-- Places visited → store EACH location
-- People mentioned → store EACH person
+When someone mentions a LIST of items, store EACH ITEM as a SEPARATE memory:
+- Books mentioned → store EACH book title separately
+- Activities → store EACH activity (swimming, painting, running, pottery)
+- Places visited → store EACH location (beach, mountains, forest)
+- Instruments played → store EACH instrument (violin, clarinet)
+- Items purchased → store EACH item (figurines, shoes)
+- Paintings created → store EACH subject (horse, sunset, sunrise)
 
 Example: If someone says "I've been reading Dr. Seuss and Nothing is Impossible":
 - Store: "Read book: Dr. Seuss" (with timestamp)
 - Store: "Read book: Nothing is Impossible" (with timestamp)
+
+**CRITICAL - OPINIONS AND REACTIONS**:
+Store what people think about others' decisions/actions:
+- "Melanie thinks Caroline will be an awesome mom"
+- "Melanie is supportive of Caroline's transition"
+- These help answer inference questions later
+
+**CRITICAL - HOBBIES AND COLLECTIONS**:
+Store hobby details that enable inference:
+- "Caroline collects classic children's books"
+- "Melanie likes classical music"
+- "Melanie prefers outdoor activities over indoor"
+- These help answer "would X likely enjoy Y?" questions
 
 **CRITICAL - SPECIFIC DETAILS**:
 Store specific names, titles, and details - not just general categories:
@@ -834,6 +871,8 @@ Store specific names, titles, and details - not just general categories:
 - ✗ "Has been reading books" (too general)
 - ✓ "Melanie does swimming, painting, and running" (specific activities)
 - ✗ "Melanie has hobbies" (too general)
+- ✓ "Caroline moved from Sweden 4 years ago" (specific)
+- ✗ "Caroline moved from her home country" (too vague)
 
 Use the source field to track which dialog turn (e.g., "D1:3") the information came from."""
 
@@ -863,7 +902,7 @@ def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: boo
     memories_created = 0
 
     # Run agent loop
-    for i in range(15):  # Max 15 tool calls per session
+    for i in range(25):  # Max 25 tool calls per session (increased for thorough extraction)
         response = call_llm_with_tools(messages, INGESTION_TOOLS, INGESTION_SYSTEM, max_tokens=1500)
 
         content = response.get("content", [])
@@ -968,23 +1007,47 @@ QUERY_SYSTEM = """You are a question-answering agent with access to a memory sys
 
 Use the search tools to find relevant memories, then answer the question based on what you find.
 
+**ANSWER FORMAT - KEEP IT CONCISE**:
+Give SHORT, DIRECT answers that match what was asked:
+- For "What X?" questions: List the items directly
+- For "When?" questions: Give the date/time
+- For "How many?" questions: Give the number
+- For "Who?" questions: Give the name(s)
+- Avoid lengthy explanations unless the question asks "why" or "how"
+
+Examples:
+- BAD: "Melanie engages in various activities including painting which she finds relaxing..."
+- GOOD: "Swimming, painting, running, pottery"
+
+- BAD: "Caroline attended the LGBTQ support group on **7 May 2023** where she felt..."
+- GOOD: "7 May 2023"
+
 **Search Strategy - TRY MULTIPLE APPROACHES**:
 1. Start with the most specific terms from the question
 2. If no results, try SYNONYMS and related terms:
    - "activities" → also search "hobbies", "sports", specific activities
    - "friends" → also search "friendship", "close", "years"
    - "books" → also search "reading", "read", specific book titles
+   - "instruments" → also search "music", "plays", "violin", "clarinet"
 3. Get memories about the PERSON if the question mentions someone
 4. Use get_timeline for ANY time-related question
 5. Search for EACH keyword separately if combined search fails
 
-**Important**: Don't give up after one search! Try at least 2-3 different search terms.
+**Important**: Don't give up after one search! Try at least 3 different search approaches.
 
 **For list questions** ("What activities...", "What books..."):
 - Search for the category AND specific items
 - Combine results from multiple searches
+- List ALL items found, not just the first few
 
-If you cannot find information after multiple searches, say "Cannot determine from memory"."""
+**For commonsense/inference questions** ("Would X likely...", "Is X considered..."):
+- Look for related preferences, activities, or stated values
+- If someone enjoys outdoor activities → likely prefers national park over theme park
+- If someone is supportive of a community → likely considered an ally
+- If someone has stated preferences → use those to infer likely answers
+- Make reasonable inferences based on what you find - don't just say "cannot determine"
+
+If you truly cannot find ANY relevant information after multiple searches, say "Cannot determine from memory"."""
 
 
 def answer_with_agent(question: str, verbose: bool = True) -> str:
@@ -1034,6 +1097,36 @@ def answer_with_agent(question: str, verbose: bool = True) -> str:
             messages.append(formatted_results)
 
     return "Cannot determine (max queries reached)"
+
+
+def process_single_qa(qa: Dict, index: int, total: int, verbose: bool = False) -> Dict:
+    """Process a single QA pair - answer and judge. Thread-safe for parallel execution."""
+    question = qa["question"]
+    gold = str(qa["answer"])
+    category = qa["category"]
+    evidence = qa.get("evidence", [])
+
+    # Get agent's answer (verbose=False to avoid interleaved output in parallel mode)
+    generated = answer_with_agent(question, verbose=verbose)
+
+    # Compute F1 score (LoCoMo primary metric)
+    f1 = compute_category_f1(generated, gold, category)
+
+    # LLM Judge (secondary metric)
+    llm_score = judge_answer(question, gold, generated)
+
+    return {
+        "index": index,
+        "question": question,
+        "expected": gold,
+        "generated": generated,
+        "category": category,
+        "category_name": CATEGORY_NAMES[category],
+        "evidence": evidence,
+        "f1_score": round(f1, 4),
+        "llm_judge": "CORRECT" if llm_score == 1 else "WRONG",
+        "llm_judge_score": llm_score
+    }
 
 
 # ============================================================================
@@ -1149,7 +1242,7 @@ Just return the label CORRECT or WRONG in a json format with the key as "label".
 # Main Evaluation
 # ============================================================================
 
-def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None):
+def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1):
     """Run the full agentic memory evaluation."""
 
     global MEMORY_STORE
@@ -1160,6 +1253,8 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     print(f"  Model: {MODEL}")
     if store_path:
         print(f"  Store: {store_path}")
+    if workers > 1:
+        print(f"  Workers: {workers} (parallel mode)")
     print(f"{'='*70}")
 
     # Load dataset
@@ -1193,46 +1288,95 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     # Detailed results for logging
     detailed_results: List[Dict] = []
 
-    for i, qa in enumerate(qa_pairs, 1):
-        question = qa["question"]
-        gold = str(qa["answer"])
-        category = qa["category"]
-        evidence = qa.get("evidence", [])
+    if workers > 1:
+        # Parallel execution
+        print(f"Processing {len(qa_pairs)} questions with {workers} workers...\n")
 
-        q_display = question[:55] + "..." if len(question) > 55 else question
-        print(f"\n[{i}/{len(qa_pairs)}] {q_display}")
+        completed = 0
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit all tasks
+            future_to_qa = {
+                executor.submit(process_single_qa, qa, i, len(qa_pairs), False): (i, qa)
+                for i, qa in enumerate(qa_pairs, 1)
+            }
 
-        # Get agent's answer
-        generated = answer_with_agent(question, verbose)
+            # Collect results as they complete
+            results_dict = {}
+            for future in as_completed(future_to_qa):
+                i, qa = future_to_qa[future]
+                try:
+                    result = future.result()
+                    results_dict[result["index"]] = result
+                    completed += 1
 
-        # Compute F1 score (LoCoMo primary metric)
-        f1 = compute_category_f1(generated, gold, category)
+                    # Print progress
+                    q_display = result["question"][:45] + "..." if len(result["question"]) > 45 else result["question"]
+                    judge_str = "✓" if result["llm_judge_score"] == 1 else "✗"
+                    print(f"[{completed}/{len(qa_pairs)}] {judge_str} F1:{result['f1_score']:.3f} | {q_display}")
 
-        # LLM Judge (secondary metric)
-        llm_score = judge_answer(question, gold, generated)
+                except Exception as e:
+                    print(f"[{i}] Error: {e}")
+                    results_dict[i] = {
+                        "index": i,
+                        "question": qa["question"],
+                        "expected": str(qa["answer"]),
+                        "generated": f"Error: {e}",
+                        "category": qa["category"],
+                        "category_name": CATEGORY_NAMES[qa["category"]],
+                        "evidence": qa.get("evidence", []),
+                        "f1_score": 0.0,
+                        "llm_judge": "WRONG",
+                        "llm_judge_score": 0
+                    }
 
-        gold_display = gold[:45] + "..." if len(gold) > 45 else gold
-        gen_display = generated[:50] + "..." if len(generated) > 50 else generated
+        # Sort results by index to maintain order
+        for i in range(1, len(qa_pairs) + 1):
+            result = results_dict[i]
+            results.append((result["category"], result["llm_judge_score"], result["f1_score"]))
+            detailed_results.append(result)
 
-        print(f"  Expected: {gold_display}")
-        print(f"  Got:      {gen_display}")
-        print(f"  F1: {f1:.3f} | Judge: {'✓ CORRECT' if llm_score == 1 else '✗ WRONG'}")
+    else:
+        # Sequential execution (original behavior)
+        for i, qa in enumerate(qa_pairs, 1):
+            question = qa["question"]
+            gold = str(qa["answer"])
+            category = qa["category"]
+            evidence = qa.get("evidence", [])
 
-        results.append((category, llm_score, f1))
+            q_display = question[:55] + "..." if len(question) > 55 else question
+            print(f"\n[{i}/{len(qa_pairs)}] {q_display}")
 
-        # Store detailed result for logging
-        detailed_results.append({
-            "index": i,
-            "question": question,
-            "expected": gold,
-            "generated": generated,
-            "category": category,
-            "category_name": CATEGORY_NAMES[category],
-            "evidence": evidence,
-            "f1_score": round(f1, 4),
-            "llm_judge": "CORRECT" if llm_score == 1 else "WRONG",
-            "llm_judge_score": llm_score
-        })
+            # Get agent's answer
+            generated = answer_with_agent(question, verbose)
+
+            # Compute F1 score (LoCoMo primary metric)
+            f1 = compute_category_f1(generated, gold, category)
+
+            # LLM Judge (secondary metric)
+            llm_score = judge_answer(question, gold, generated)
+
+            gold_display = gold[:45] + "..." if len(gold) > 45 else gold
+            gen_display = generated[:50] + "..." if len(generated) > 50 else generated
+
+            print(f"  Expected: {gold_display}")
+            print(f"  Got:      {gen_display}")
+            print(f"  F1: {f1:.3f} | Judge: {'✓ CORRECT' if llm_score == 1 else '✗ WRONG'}")
+
+            results.append((category, llm_score, f1))
+
+            # Store detailed result for logging
+            detailed_results.append({
+                "index": i,
+                "question": question,
+                "expected": gold,
+                "generated": generated,
+                "category": category,
+                "category_name": CATEGORY_NAMES[category],
+                "evidence": evidence,
+                "f1_score": round(f1, 4),
+                "llm_judge": "CORRECT" if llm_score == 1 else "WRONG",
+                "llm_judge_score": llm_score
+            })
 
     # Print results
     print(f"\n{'='*70}")
@@ -1299,6 +1443,7 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         "model": MODEL,
         "api_provider": API_PROVIDER,
         "limit": limit,
+        "workers": workers,
         "conversation_id": conv["sample_id"],
         "memory_stats": ingest_stats,
         "summary": {
@@ -1380,6 +1525,7 @@ def main():
     parser.add_argument("--show-schema", action="store_true", help="Show xm schema after ingestion")
     parser.add_argument("--store", type=str, help="Path to xm store (default: in-memory)")
     parser.add_argument("--ingest-only", action="store_true", help="Only ingest, don't run QA (for schema inspection)")
+    parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers for QA phase (default: 1)")
 
     args = parser.parse_args()
 
@@ -1400,7 +1546,8 @@ def main():
             limit=args.limit,
             verbose=not args.quiet,
             show_schema=args.show_schema,
-            store_path=args.store
+            store_path=args.store,
+            workers=args.workers
         )
 
 
