@@ -167,4 +167,6 @@ See [SPEC-029-xm-agent-memory-system.md](../SPEC-029-xm-agent-memory-system.md) 
 
 ## License
 
-Apache-2.0
+AGPL-3.0-or-later
+
+Copyright 2026 Hugo O'Connor, Anuna Research
