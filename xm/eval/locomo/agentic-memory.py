@@ -344,6 +344,54 @@ QUERY_TOOLS = [
                 }
             }
         }
+    },
+    # ========== INTROSPECTION TOOLS ==========
+    {
+        "name": "schema_classes",
+        "description": "List all node types (classes) in the knowledge graph with instance counts. Use this to understand what types of information are stored.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "schema_predicates",
+        "description": "List all predicates (properties/relationships) used in the knowledge graph with usage counts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "query_backlinks",
+        "description": "Find all nodes that link TO a specific node (Org-roam style backlinks). Use this to discover related information.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "The target node URI or keyword to find backlinks for"
+                }
+            },
+            "required": ["target"]
+        }
+    },
+    {
+        "name": "query_nodes",
+        "description": "Search for nodes by type.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "node_type": {
+                    "type": "string",
+                    "description": "Filter by node type (e.g., 'fact', 'biographical', 'event')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 20)"
+                }
+            }
+        }
     }
 ]
 
@@ -806,6 +854,52 @@ class XmStore:
         if success:
             print(output[:1000])
 
+    # ========== INTROSPECTION METHODS ==========
+
+    def schema_classes(self) -> str:
+        """List all node types with counts."""
+        success, output = self._run_xm(["schema", "classes"])
+        if success:
+            return output
+        # Fallback to local stats
+        return json.dumps({"classes": self.stats()["by_type"]}, indent=2)
+
+    def schema_predicates(self) -> str:
+        """List all predicates with usage counts."""
+        success, output = self._run_xm(["schema", "predicates"])
+        if success:
+            return output
+        # Fallback: list unique keys
+        predicates = set()
+        for mem in self._memories:
+            predicates.update(mem.keys())
+        return json.dumps({"predicates": list(predicates)}, indent=2)
+
+    def query_backlinks(self, target: str) -> str:
+        """Find nodes linking TO a target (Org-roam style backlinks)."""
+        # First try xm query backlinks
+        success, output = self._run_xm(["query", "backlinks", target])
+        if success and "bindings" in output:
+            return output
+
+        # Fallback: search for mentions in content
+        results = []
+        target_lower = target.lower()
+        for mem in self._memories:
+            if target_lower in mem["content"].lower() or target_lower in mem["subject"]:
+                results.append(mem)
+        return json.dumps(results[:15], indent=2) if results else "No backlinks found"
+
+    def query_nodes(self, node_type: str = None, limit: int = 20) -> str:
+        """Search for nodes by type."""
+        if node_type:
+            # Filter by type locally
+            results = [m for m in self._memories if m["type"] == node_type][:limit]
+            return json.dumps(results, indent=2) if results else f"No nodes of type '{node_type}'"
+
+        # Return all nodes (limited)
+        return json.dumps(self._memories[:limit], indent=2)
+
 
 # Alias for compatibility
 MemoryStore = XmStore
@@ -857,6 +951,22 @@ def execute_query_tool(tool_name: str, tool_input: Dict) -> str:
     elif tool_name == "get_timeline":
         results = MEMORY_STORE.get_timeline(subject=tool_input.get("subject"))
         return json.dumps({"events": results})
+
+    # Introspection tools
+    elif tool_name == "schema_classes":
+        return MEMORY_STORE.schema_classes()
+
+    elif tool_name == "schema_predicates":
+        return MEMORY_STORE.schema_predicates()
+
+    elif tool_name == "query_backlinks":
+        return MEMORY_STORE.query_backlinks(tool_input.get("target", ""))
+
+    elif tool_name == "query_nodes":
+        return MEMORY_STORE.query_nodes(
+            node_type=tool_input.get("node_type"),
+            limit=tool_input.get("limit", 20)
+        )
 
     return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
@@ -1252,6 +1362,19 @@ def ingest_conversation_with_agent(conv: Dict, verbose: bool = True, extract_imp
 QUERY_SYSTEM = """You are a question-answering agent with access to a memory system.
 
 Use the search tools to find relevant memories, then answer the question based on what you find.
+
+**AVAILABLE TOOLS**:
+
+INTROSPECTION (use to understand the knowledge graph):
+- schema_classes: See what types of nodes exist (fact, person, event, biographical, etc.)
+- schema_predicates: See what properties are available
+- query_backlinks: Find nodes that link TO a target (discover related info)
+- query_nodes: List nodes by type
+
+SEARCH (use to find specific memories):
+- search_memories: Keyword search
+- get_memories_about: All memories about a person/topic
+- get_timeline: Events in chronological order
 
 **ANSWER FORMAT - KEEP IT CONCISE**:
 Give SHORT, DIRECT answers that match what was asked:
