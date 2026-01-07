@@ -23,6 +23,8 @@
   #:use-module (ice-9 popen)
   #:use-module (ice-9 rdelim)
   #:use-module (ice-9 threads)
+  #:use-module (ice-9 binary-ports)
+  #:use-module (rnrs bytevectors)
   #:use-module (srfi srfi-19)
   #:use-module (xm cli output)
   #:export (;; Daemon management
@@ -42,6 +44,8 @@
             daemon-pid-path
             daemon-log-path
             daemon-sturdyref-path
+            daemon-tls-key-path
+            daemon-tls-cert-path
 
             ;; RPC client
             daemon-rpc))
@@ -104,7 +108,9 @@
       ;; ESRCH (3) means process doesn't exist
       ;; EPERM (1) means process exists but we can't signal it
       (let ((errno (system-error-errno args)))
-        (not (= errno 3))))))
+        (if errno
+            (not (= errno 3))
+            #f)))))
 
 (define (daemon-status)
   "Get daemon status as an alist."
@@ -217,7 +223,7 @@
                       (use-modules (goblins actor-lib methods))
                       (use-modules (goblins ocapn captp))
                       (use-modules (goblins ocapn ids))
-                      (use-modules (xm ocapn netlayer-uds))
+                      (use-modules (goblins ocapn netlayer tcp-tls))
                       #t)
                    (interaction-environment)))
            (lambda (key . args)
@@ -249,56 +255,117 @@
 
 (define *daemon-netlayer* #f)
 
+(define *daemon-tls-port* 9418)  ;; Default OCapN port (like git)
+
+(define (daemon-tls-key-path)
+  "Get path to daemon TLS private key."
+  (string-append (xm-data-dir) "/tls-key.pem"))
+
+(define (daemon-tls-cert-path)
+  "Get path to daemon TLS certificate."
+  (string-append (xm-data-dir) "/tls-cert.pem"))
+
 (define (run-goblins-daemon-loop)
-  "Run daemon with Goblins actor support and UDS netlayer for OCapN networking."
-  (format #t "Initializing Goblins runtime with OCapN UDS netlayer...\n")
+  "Run daemon with Goblins actor support and tcp-tls netlayer for OCapN networking."
+  (format #t "Initializing Goblins runtime with OCapN tcp-tls netlayer...\n")
+  (force-output (current-output-port))
 
-  ;; These are evaluated at runtime to avoid compile-time dependency
-  (let* ((spawn-vat (eval 'spawn-vat (resolve-module '(goblins))))
-         (call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
-         (spawn (eval 'spawn (resolve-module '(goblins))))
-         (spawn-mycapn (eval 'spawn-mycapn (resolve-module '(goblins ocapn captp))))
-         (^uds-netlayer (eval '^uds-netlayer (resolve-module '(xm ocapn netlayer-uds)))))
+  ;; Get run-fibers for async I/O (required for tcp-tls)
+  (let ((run-fibers (eval 'run-fibers (resolve-module '(fibers)))))
 
-    ;; Ensure OCapN socket directory exists
-    (let ((ocapn-dir (string-append (xm-data-dir) "/ocapn")))
-      (unless (file-exists? ocapn-dir)
-        (mkdir ocapn-dir #o755)))
+    ;; Load TLS credentials before entering fibers (simpler error handling)
+    (define tls-key
+      (if (file-exists? (daemon-tls-key-path))
+          (begin
+            (format #t "Loading TLS key from ~a\n" (daemon-tls-key-path))
+            (call-with-input-file (daemon-tls-key-path)
+              (lambda (port) (get-bytevector-all port))))
+          (begin
+            (format #t "Generating new TLS key (4096-bit RSA)...\n")
+            (force-output (current-output-port))
+            (let* ((generate-tls-private-key
+                    (eval 'generate-tls-private-key
+                          (resolve-module '(goblins ocapn netlayer tcp-tls))))
+                   (key (generate-tls-private-key)))
+              (call-with-output-file (daemon-tls-key-path)
+                (lambda (port) (put-bytevector port key)))
+              (chmod (daemon-tls-key-path) #o600)
+              (format #t "TLS key saved to ~a\n" (daemon-tls-key-path))
+              key))))
 
-    ;; Create the main vat
-    (set! *daemon-vat* (spawn-vat))
-    (format #t "Goblins vat created\n")
+    (define tls-cert
+      (if (file-exists? (daemon-tls-cert-path))
+          (begin
+            (format #t "Loading TLS cert from ~a\n" (daemon-tls-cert-path))
+            (call-with-input-file (daemon-tls-cert-path)
+              (lambda (port) (get-bytevector-all port))))
+          (begin
+            (format #t "Generating new TLS certificate...\n")
+            (force-output (current-output-port))
+            (let* ((generate-tls-certificate
+                    (eval 'generate-tls-certificate
+                          (resolve-module '(goblins ocapn netlayer tcp-tls))))
+                   (cert (generate-tls-certificate tls-key)))
+              (call-with-output-file (daemon-tls-cert-path)
+                (lambda (port) (put-bytevector port cert)))
+              (format #t "TLS cert saved to ~a\n" (daemon-tls-cert-path))
+              cert))))
 
-    ;; Initialize actors inside the vat
-    (call-with-vat *daemon-vat*
-      (lambda ()
-        ;; Create capability registry actor
-        (set! *daemon-cap-registry* (spawn ^cap-registry))
-        (format #t "Cap registry actor spawned\n")
+    ;; Set up Unix socket server for CLI communication (outside fibers)
+    (set! *daemon-running* #t)
+    (setup-socket-server)
+    (format #t "CLI socket ready at ~a\n" (daemon-socket-path))
+    (force-output (current-output-port))
 
-        ;; Create UDS netlayer for OCapN networking
-        (let ((ocapn-dir (string-append (xm-data-dir) "/ocapn")))
-          (set! *daemon-netlayer* (spawn ^uds-netlayer ocapn-dir #:peer-id "daemon"))
-          (format #t "OCapN UDS netlayer created at ~a/daemon.sock\n" ocapn-dir))
+    ;; Run the fibers event loop with Goblins vat
+    (format #t "Starting fibers event loop...\n")
+    (force-output (current-output-port))
 
-        ;; Create mycapn with the UDS netlayer
-        (set! *daemon-mycapn* (spawn-mycapn *daemon-netlayer*))
-        (format #t "OCapN mycapn ready with UDS networking\n")))
+    (run-fibers
+     (lambda ()
+       ;; Get Goblins procedures inside fibers context
+       (let* ((spawn-vat (eval 'spawn-vat (resolve-module '(goblins))))
+              (call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+              (spawn (eval 'spawn (resolve-module '(goblins))))
+              (spawn-mycapn (eval 'spawn-mycapn (resolve-module '(goblins ocapn captp))))
+              (^tcp-tls-netlayer (eval '^tcp-tls-netlayer
+                                        (resolve-module '(goblins ocapn netlayer tcp-tls)))))
 
-    (format #t "Goblins/OCapN runtime initialized\n"))
+         ;; Create the main vat
+         (set! *daemon-vat* (spawn-vat))
+         (format #t "Goblins vat created\n")
+         (force-output (current-output-port))
 
-  ;; Set up Unix socket server for CLI communication
-  (set! *daemon-running* #t)
-  (setup-socket-server)
+         ;; Initialize actors inside the vat
+         (call-with-vat *daemon-vat*
+           (lambda ()
+             ;; Create capability registry actor
+             (set! *daemon-cap-registry* (spawn ^cap-registry))
+             (format #t "Cap registry actor spawned\n")
 
-  (format #t "Daemon ready, listening on ~a\n" (daemon-socket-path))
+             ;; Create tcp-tls netlayer for OCapN networking
+             (set! *daemon-netlayer*
+                   (spawn ^tcp-tls-netlayer "localhost"
+                          #:port *daemon-tls-port*
+                          #:key tls-key
+                          #:cert tls-cert))
+             (format #t "OCapN tcp-tls netlayer listening on localhost:~a\n" *daemon-tls-port*)
 
-  ;; Main loop - process Goblins events and socket connections
-  (let loop ()
-    (when *daemon-running*
-      ;; Handle socket connections (with timeout for event loop)
-      (handle-socket-connections)
-      (loop)))
+             ;; Create mycapn with the tcp-tls netlayer
+             (set! *daemon-mycapn* (spawn-mycapn *daemon-netlayer*))
+             (format #t "OCapN mycapn ready with tcp-tls networking\n")
+             (force-output (current-output-port))))
+
+         (format #t "Daemon ready\n")
+         (force-output (current-output-port))
+
+         ;; Main loop inside fibers - handle CLI socket connections
+         (let loop ()
+           (when *daemon-running*
+             (handle-socket-connections)
+             (loop)))))
+     #:parallelism 1
+     #:hz 0))
 
   (cleanup-socket)
   (format #t "Daemon stopped\n"))

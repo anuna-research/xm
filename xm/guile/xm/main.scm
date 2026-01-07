@@ -22,6 +22,7 @@
   #:use-module (xm cli io)
   #:use-module (xm cli sync)
   #:use-module (xm cli daemon)
+  #:use-module (xm cli keys)
   #:use-module (xm store)
   #:export (main))
 
@@ -45,6 +46,7 @@ Commands:
   graph      Manage named graphs (list, create, drop, stats)
   session    Manage agent sessions
   cap        Manage capabilities
+  keys       Manage agent identity keys (for OCapN networking)
   import     Import knowledge from files
   export     Export knowledge to files
   subscribe  Subscribe to real-time changes
@@ -295,6 +297,33 @@ Examples:
   xm daemon stop
   xm daemon restart
 ")
+    (keys . "
+xm keys - Manage agent identity keys
+
+Usage:
+  xm keys <subcommand> [options]
+
+Subcommands:
+  info         Show agent identity (fingerprint, paths)
+  generate     Generate new agent keys
+  fingerprint  Print just the fingerprint (for scripts)
+  path         Show paths to key files
+  export       Export keys for backup/migration
+  import       Import keys from backup
+
+Options:
+  --force      Overwrite existing keys (generate, import)
+
+The agent fingerprint (SHA256 hash of certificate) is used in OCapN
+sturdyrefs to identify this agent to remote peers.
+
+Examples:
+  xm keys info
+  xm keys generate
+  xm keys fingerprint
+  xm keys export ~/backup/my-agent
+  xm keys import ~/backup/my-agent --force
+")
     (eval . "
 xm eval - Run evaluations and benchmarks
 
@@ -446,6 +475,10 @@ Examples:
                   (handle-sync-command opts global-opts store cap-ref))
                  ((daemon)
                   (handle-daemon-command subcommand opts global-opts))
+                 ((keys)
+                  (handle-keys-command subcommand
+                                       (acons 'positional positional opts)
+                                       global-opts))
                  ((store)
                   (handle-store-command subcommand
                                         (acons 'positional positional opts)
@@ -468,6 +501,16 @@ Examples:
 ;;; --------------------------------------------------------------------
 ;;; Command Handlers (Placeholders for commands not yet implemented)
 ;;; --------------------------------------------------------------------
+
+(define (handle-keys-command subcommand opts global-opts)
+  "Handle keys subcommands."
+  (let ((positional (or (assoc-ref opts 'positional) '())))
+    ;; Build args list: subcommand + positional args
+    (let ((args (if subcommand
+                    (cons (symbol->string subcommand) positional)
+                    positional)))
+      (keys-command args)
+      0)))
 
 (define (handle-daemon-command subcommand opts global-opts)
   "Handle daemon subcommands."
@@ -513,7 +556,7 @@ Examples:
          2)))
     (lambda (key . args)
       (output-error "DAEMON_ERROR"
-                    (format #f "Daemon error: ~a" (car args))
+                    (format #f "Daemon error: ~a ~a" key args)
                     #f
                     global-opts)
       1)))
