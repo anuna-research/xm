@@ -862,6 +862,169 @@ def execute_query_tool(tool_name: str, tool_input: Dict) -> str:
 
 
 # ============================================================================
+# LLM-based Implicit Fact Extraction (General Approach)
+# ============================================================================
+
+FACT_EXTRACTION_SYSTEM = """You are a fact extraction agent. Given a set of memories, your task is to identify IMPLICIT facts that can be inferred but are not explicitly stated.
+
+For each implicit fact you find, output it using the extract_fact tool.
+
+**What to look for:**
+
+1. **Status inferences**: "single parent" implies relationship_status=single
+2. **Location expansions**: "camped at beach and mountains" → separate facts for each location
+3. **Temporal calculations**: "friends for 4 years" + session_date → friendship_start_date
+4. **Role inferences**: "her children love dinosaurs" → she has children, she is a parent
+5. **Trait inferences**: "volunteers at youth center" → she is community-oriented
+
+**Rules:**
+- Only extract facts that are NOT already explicitly stated
+- Each fact should be atomic (one piece of information)
+- Include the subject (who the fact is about)
+- Be conservative - only extract facts that are clearly implied
+
+**Example:**
+Memory: "Melanie, as a single parent, took her kids camping at the beach and mountains"
+Implicit facts to extract:
+- Melanie's relationship status is single
+- Melanie camping location: beach
+- Melanie camping location: mountains
+- Melanie is a parent
+- Melanie has children"""
+
+FACT_EXTRACTION_TOOLS = [
+    {
+        "name": "extract_fact",
+        "description": "Extract an implicit fact that can be inferred from memories",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": "Who this fact is about"
+                },
+                "fact_type": {
+                    "type": "string",
+                    "enum": ["biographical", "preference", "relationship", "location", "activity", "trait"],
+                    "description": "Category of the fact"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The implicit fact to store"
+                },
+                "source_memory": {
+                    "type": "string",
+                    "description": "Brief reference to which memory this was inferred from"
+                }
+            },
+            "required": ["subject", "fact_type", "content"]
+        }
+    }
+]
+
+
+def run_llm_fact_extraction(batch_size: int = 20, verbose: bool = True) -> int:
+    """Use LLM to extract implicit facts from stored memories.
+
+    This is a general approach that leverages the model's reasoning
+    to find implicit information, rather than task-specific patterns.
+    """
+    if verbose:
+        print("\n  Running LLM-based implicit fact extraction...")
+
+    memories = MEMORY_STORE._memories
+    if not memories:
+        return 0
+
+    extracted_count = 0
+
+    # Process memories in batches
+    for i in range(0, len(memories), batch_size):
+        batch = memories[i:i + batch_size]
+
+        # Format memories for the LLM
+        memories_text = "\n".join([
+            f"- [{m['type']}] {m['subject']}: {m['content']}"
+            for m in batch
+        ])
+
+        messages = [{
+            "role": "user",
+            "content": f"""Analyze these memories and extract any IMPLICIT facts that can be inferred but are not explicitly stated.
+
+MEMORIES:
+{memories_text}
+
+Use extract_fact for each implicit fact you find. Only extract facts that add NEW information not already stated."""
+        }]
+
+        # Run extraction loop
+        for _ in range(15):  # Max tool calls per batch
+            response = call_llm_with_tools(
+                messages,
+                FACT_EXTRACTION_TOOLS,
+                FACT_EXTRACTION_SYSTEM,
+                max_tokens=1500
+            )
+
+            content = response.get("content", [])
+            stop_reason = response.get("stop_reason", "")
+
+            tool_uses = [c for c in content if c.get("type") == "tool_use"]
+
+            if not tool_uses or stop_reason == "end_turn":
+                break
+
+            # Process extracted facts
+            tool_results = []
+            for tool_use in tool_uses:
+                if tool_use["name"] == "extract_fact":
+                    inp = tool_use["input"]
+                    subject = inp.get("subject", "").lower()
+                    fact_content = inp.get("content", "")
+                    fact_type = inp.get("fact_type", "fact")
+
+                    # Check if this fact is truly new (not already stored)
+                    is_new = True
+                    fact_lower = fact_content.lower()
+                    for existing in MEMORY_STORE._memories:
+                        if (fact_lower in existing["content"].lower() or
+                            existing["content"].lower() in fact_lower):
+                            is_new = False
+                            break
+
+                    if is_new and fact_content:
+                        MEMORY_STORE.add_memory(
+                            memory_type=fact_type,
+                            content=fact_content,
+                            subject=subject,
+                            source="llm_inference"
+                        )
+                        extracted_count += 1
+
+                        if verbose:
+                            print(f"    + {fact_content[:60]}...")
+
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use["id"],
+                        "content": json.dumps({"stored": is_new})
+                    })
+
+            messages.append(format_assistant_message(content))
+            formatted_results = format_tool_results(tool_results)
+            if isinstance(formatted_results, list):
+                messages.extend(formatted_results)
+            else:
+                messages.append(formatted_results)
+
+    if verbose:
+        print(f"  → Extracted {extracted_count} implicit facts via LLM reasoning")
+
+    return extracted_count
+
+
+# ============================================================================
 # Agentic Ingestion
 # ============================================================================
 
@@ -1022,7 +1185,7 @@ def ingest_session_with_agent(session_data: Dict, session_idx: int, verbose: boo
     return memories_created
 
 
-def ingest_conversation_with_agent(conv: Dict, verbose: bool = True) -> Dict:
+def ingest_conversation_with_agent(conv: Dict, verbose: bool = True, extract_implicit: bool = False) -> Dict:
     """Have the agent ingest an entire conversation."""
 
     conv_id = conv["sample_id"]
@@ -1069,6 +1232,10 @@ def ingest_conversation_with_agent(conv: Dict, verbose: bool = True) -> Dict:
             print(f"    → {memories} memories stored")
 
         session_idx += 1
+
+    # Run LLM-based implicit fact extraction if enabled
+    if extract_implicit:
+        run_llm_fact_extraction(verbose=verbose)
 
     stats = MEMORY_STORE.stats()
     if verbose:
@@ -1334,7 +1501,7 @@ Just return the label CORRECT or WRONG in a json format with the key as "label".
 # Main Evaluation
 # ============================================================================
 
-def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1):
+def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: bool = False, store_path: str = None, workers: int = 1, extract_implicit: bool = False):
     """Run the full agentic memory evaluation."""
 
     global MEMORY_STORE
@@ -1347,6 +1514,8 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
         print(f"  Store: {store_path}")
     if workers > 1:
         print(f"  Workers: {workers} (parallel mode)")
+    if extract_implicit:
+        print(f"  LLM Fact Extraction: enabled")
     print(f"{'='*70}")
 
     # Load dataset
@@ -1362,7 +1531,7 @@ def run_agentic_memory_eval(limit: int = 10, verbose: bool = True, show_schema: 
     print("\nThe agent will read the conversation and decide")
     print("what to remember and how to structure it.\n")
 
-    ingest_stats = ingest_conversation_with_agent(conv, verbose)
+    ingest_stats = ingest_conversation_with_agent(conv, verbose, extract_implicit=extract_implicit)
 
     # Show schema if requested
     if show_schema:
@@ -1618,6 +1787,7 @@ def main():
     parser.add_argument("--store", type=str, help="Path to xm store (default: in-memory)")
     parser.add_argument("--ingest-only", action="store_true", help="Only ingest, don't run QA (for schema inspection)")
     parser.add_argument("--workers", "-w", type=int, default=1, help="Number of parallel workers for QA phase (default: 1)")
+    parser.add_argument("--extract-implicit", action="store_true", help="Run LLM-based implicit fact extraction after ingestion")
 
     args = parser.parse_args()
 
@@ -1639,7 +1809,8 @@ def main():
             verbose=not args.quiet,
             show_schema=args.show_schema,
             store_path=args.store,
-            workers=args.workers
+            workers=args.workers,
+            extract_implicit=args.extract_implicit
         )
 
 
