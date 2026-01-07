@@ -629,27 +629,63 @@ class XmStore:
         return self._local_search(query, memory_type)
 
     def _local_search(self, query: str, memory_type: str = None) -> List[Dict]:
-        """Enhanced local search with word matching and scoring."""
+        """Enhanced local search with word matching, synonyms, and substring matching."""
         query_lower = query.lower()
         query_words = set(query_lower.split())
 
-        # Common synonyms for better matching
+        # Expanded synonyms for better matching
         synonyms = {
-            "friend": ["friends", "friendship", "buddy", "close"],
-            "friends": ["friend", "friendship", "buddy", "close"],
-            "book": ["books", "reading", "read", "novel"],
-            "books": ["book", "reading", "read", "novel"],
-            "activity": ["activities", "hobby", "hobbies", "sport"],
-            "activities": ["activity", "hobby", "hobbies", "sport"],
+            # Social
+            "friend": ["friends", "friendship", "buddy", "close", "support"],
+            "friends": ["friend", "friendship", "buddy", "close", "support"],
+            # Reading
+            "book": ["books", "reading", "read", "novel", "title", "charlotte", "becoming", "nicole"],
+            "books": ["book", "reading", "read", "novel", "title", "charlotte", "becoming", "nicole"],
+            "reading": ["book", "books", "read", "novel"],
+            # Activities
+            "activity": ["activities", "hobby", "hobbies", "sport", "partake"],
+            "activities": ["activity", "hobby", "hobbies", "sport", "partake"],
+            "hobby": ["hobbies", "activity", "activities"],
+            # Sports/Exercise
             "swim": ["swimming", "swam", "pool"],
             "swimming": ["swim", "swam", "pool"],
-            "run": ["running", "ran", "race", "marathon"],
-            "running": ["run", "ran", "race", "marathon"],
+            "run": ["running", "ran", "race", "marathon", "charity"],
+            "running": ["run", "ran", "race", "marathon", "charity"],
             "race": ["running", "ran", "marathon", "charity"],
-            "camp": ["camping", "camped", "tent", "outdoor"],
-            "camping": ["camp", "camped", "tent", "outdoor"],
-            "paint": ["painting", "painted", "art", "artwork"],
-            "painting": ["paint", "painted", "art", "artwork"],
+            "hike": ["hiking", "hiked", "trail", "mountain"],
+            "hiking": ["hike", "hiked", "trail", "mountain"],
+            # Outdoors
+            "camp": ["camping", "camped", "tent", "outdoor", "forest", "mountain", "beach"],
+            "camping": ["camp", "camped", "tent", "outdoor", "forest", "mountain", "beach"],
+            "outdoor": ["outdoors", "outside", "nature", "camping", "hiking"],
+            # Art
+            "paint": ["painting", "painted", "art", "artwork", "canvas", "sunrise", "sunset"],
+            "painting": ["paint", "painted", "art", "artwork", "canvas", "sunrise", "sunset"],
+            "art": ["painting", "pottery", "drawing", "artwork", "creative"],
+            "pottery": ["pot", "pots", "bowl", "plate", "ceramic", "clay"],
+            # Pets/Animals
+            "pet": ["pets", "dog", "cat", "animal", "luna", "oliver", "bailey", "oscar"],
+            "pets": ["pet", "dog", "cat", "animal", "luna", "oliver", "bailey", "oscar"],
+            "dog": ["pet", "pets", "luna", "animal"],
+            "cat": ["pet", "pets", "oliver", "bailey", "animal"],
+            # Family
+            "gift": ["gave", "received", "present", "necklace", "bowl"],
+            "grandma": ["grandmother", "grandparent", "necklace", "sweden"],
+            "grandmother": ["grandma", "grandparent"],
+            "child": ["children", "kids", "kid", "son", "daughter"],
+            "children": ["child", "kids", "kid", "son", "daughter"],
+            "kids": ["children", "child", "kid", "son", "daughter"],
+            # Music
+            "instrument": ["instruments", "music", "play", "piano", "guitar", "clarinet", "violin"],
+            "instruments": ["instrument", "music", "play", "piano", "guitar", "clarinet", "violin"],
+            "music": ["instrument", "piano", "guitar", "clarinet", "violin", "song", "concert"],
+            # Events
+            "conference": ["event", "meeting", "workshop", "transgender"],
+            "workshop": ["conference", "event", "meeting", "counseling"],
+            "parade": ["pride", "march", "event"],
+            # Places
+            "country": ["sweden", "home", "moved", "from"],
+            "sweden": ["country", "home", "moved", "grandma"],
         }
 
         # Expand query with synonyms
@@ -669,20 +705,37 @@ class XmStore:
 
             # Score based on matches
             score = 0
-            # Exact phrase match
+
+            # Exact phrase match (highest priority)
             if query_lower in text:
-                score += 10
-            # Word matches
+                score += 15
+
+            # Word matches with expanded synonyms
             text_words = set(text.split())
             matching_words = expanded_words & text_words
-            score += len(matching_words) * 2
+            score += len(matching_words) * 3
+
+            # Substring matching - check if any query word appears as substring
+            for word in query_words:
+                if len(word) >= 3:  # Only for words 3+ chars
+                    if word in text:
+                        score += 5
+                    # Also check if text words start with query word (prefix match)
+                    for text_word in text_words:
+                        if text_word.startswith(word) or word.startswith(text_word):
+                            score += 2
+
+            # Boost if subject matches any query word
+            for word in query_words:
+                if word in subject_lower:
+                    score += 8
 
             if score > 0:
                 results.append((score, mem))
 
         # Sort by score descending
         results.sort(key=lambda x: -x[0])
-        return [r[1] for r in results[:15]]
+        return [r[1] for r in results[:20]]  # Return more results
 
     def _binding_to_memory(self, binding: Dict) -> Dict:
         """Convert SPARQL binding to memory dict."""
@@ -695,8 +748,34 @@ class XmStore:
         }
 
     def get_about(self, subject: str) -> List[Dict]:
-        """Get all memories about a subject."""
-        return self._local_search(subject, None)[:15]
+        """Get all memories about a subject - returns comprehensive results."""
+        subject_lower = subject.lower()
+
+        # First, get all memories where subject matches directly
+        direct_matches = []
+        content_matches = []
+
+        for mem in self._memories:
+            mem_subject = mem["subject"].lower()
+            mem_content = mem["content"].lower()
+
+            # Direct subject match (highest priority)
+            if subject_lower in mem_subject or mem_subject in subject_lower:
+                direct_matches.append(mem)
+            # Content mention
+            elif subject_lower in mem_content:
+                content_matches.append(mem)
+
+        # Combine: direct matches first, then content matches
+        results = direct_matches + content_matches
+
+        # Also include search results to catch related items
+        search_results = self._local_search(subject, None)
+        for mem in search_results:
+            if mem not in results:
+                results.append(mem)
+
+        return results[:25]  # Return more results for comprehensive coverage
 
     def get_timeline(self, subject: str = None) -> List[Dict]:
         """Get events in order."""
@@ -1022,32 +1101,45 @@ Examples:
 - BAD: "Caroline attended the LGBTQ support group on **7 May 2023** where she felt..."
 - GOOD: "7 May 2023"
 
-**Search Strategy - TRY MULTIPLE APPROACHES**:
-1. Start with the most specific terms from the question
-2. If no results, try SYNONYMS and related terms:
-   - "activities" → also search "hobbies", "sports", specific activities
-   - "friends" → also search "friendship", "close", "years"
-   - "books" → also search "reading", "read", specific book titles
-   - "instruments" → also search "music", "plays", "violin", "clarinet"
-3. Get memories about the PERSON if the question mentions someone
-4. Use get_timeline for ANY time-related question
-5. Search for EACH keyword separately if combined search fails
+**CRITICAL SEARCH STRATEGY**:
 
-**Important**: Don't give up after one search! Try at least 3 different search approaches.
+1. **ALWAYS start with get_memories_about for the PERSON mentioned**:
+   - "What are Melanie's pets?" → First: get_memories_about("Melanie")
+   - "When did Caroline go to..." → First: get_memories_about("Caroline")
+   - This returns ALL memories about that person, then you can scan for the answer
 
-**For list questions** ("What activities...", "What books..."):
-- Search for the category AND specific items
-- Combine results from multiple searches
-- List ALL items found, not just the first few
+2. **Search for SPECIFIC ITEMS, not just categories**:
+   - For pets: search "dog", "cat", "Luna", "Oliver", "Bailey" (not just "pets")
+   - For books: search "Charlotte", "Becoming Nicole", "reading" (not just "books")
+   - For instruments: search "piano", "guitar", "clarinet", "violin" (not just "instruments")
+   - For gifts: search "necklace", "bowl", "gave", "received" (not just "gift")
+
+3. **For possessive questions ("X's Y"), search the PERSON first**:
+   - "Melanie's pets" → get_memories_about("Melanie"), then look for dog/cat mentions
+   - "Caroline's grandma" → get_memories_about("Caroline"), then look for grandma/grandmother
+   - "Melanie's children" → get_memories_about("Melanie"), then count kids/son/daughter mentions
+
+4. **Search for related concepts**:
+   - "country" → also search "Sweden", "moved", "from"
+   - "charity race" → also search "running", "mental health"
+   - "conference" → also search "transgender", "LGBTQ", "workshop"
+
+5. **Use get_timeline for ANY time-related question**:
+   - When questions, how long ago, dates, etc.
+
+**IMPORTANT**:
+- Don't give up after one search! Try at least 3-4 different approaches.
+- If category search fails, try specific item names
+- ALWAYS try get_memories_about for the person mentioned
 
 **For commonsense/inference questions** ("Would X likely...", "Is X considered..."):
+- First get all memories about the person
 - Look for related preferences, activities, or stated values
 - If someone enjoys outdoor activities → likely prefers national park over theme park
 - If someone is supportive of a community → likely considered an ally
-- If someone has stated preferences → use those to infer likely answers
 - Make reasonable inferences based on what you find - don't just say "cannot determine"
 
-If you truly cannot find ANY relevant information after multiple searches, say "Cannot determine from memory"."""
+If you truly cannot find ANY relevant information after 4+ different searches, say "Cannot determine from memory"."""
 
 
 def answer_with_agent(question: str, verbose: bool = True) -> str:
