@@ -4,7 +4,7 @@ Shared memory infrastructure for heterogeneous LLM agents over an open network.
 
 ## Overview
 
-xm is a research project exploring how LLM agents (Claude, GPT, Gemini, local models) can share persistent, linked memory. The core component is **xm** (Cross Memory), a CLI tool that any agent can use to store and retrieve knowledge.
+xm is a research project exploring how LLM agents (Claude, GPT, Gemini, local models) can share persistent, linked memory. The core component is **xm** (Linked Memory), a CLI tool that any agent can use to store and retrieve knowledge.
 
 ## Use Cases
 
@@ -117,7 +117,7 @@ xm node create -t draft -p content="Based on climate research..." \
 
 ```
 meld/
-├── xm/                    # Cross Memory CLI tool
+├── xm/                    # Linked Memory CLI tool
 ├── SPEC-029-*.md          # xm specification
 └── users/                 # User personas and scenarios
 ```

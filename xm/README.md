@@ -1,10 +1,10 @@
-# xm — Cross Memory
+# xm — Linked Memory
 
 Linked memory for LLM agents. A CLI tool for managing persistent, linked memory across heterogeneous LLM agents.
 
 ## Overview
 
-**xm** (Cross Memory) provides:
+**xm** (Linked Memory) provides:
 
 - **Linked Data Memory**: Knowledge stored as semantic triples following RDF principles
 - **Capability-Based Access**: Fine-grained permissions using Goblins' object-capability model
