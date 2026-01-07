@@ -255,7 +255,12 @@
 
 (define *daemon-netlayer* #f)
 
-(define *daemon-tls-port* 9418)  ;; Default OCapN port (like git)
+(define (daemon-tls-port)
+  "Get TLS port, configurable via XM_PORT env var."
+  (let ((port-str (getenv "XM_PORT")))
+    (if port-str
+        (string->number port-str)
+        9418)))  ;; Default OCapN port (like git)
 
 (define (daemon-tls-key-path)
   "Get path to daemon TLS private key."
@@ -272,6 +277,9 @@
 
   ;; Get run-fibers for async I/O (required for tcp-tls)
   (let ((run-fibers (eval 'run-fibers (resolve-module '(fibers)))))
+
+    ;; Capture port before entering fibers
+    (define tls-port (daemon-tls-port))
 
     ;; Load TLS credentials before entering fibers (simpler error handling)
     (define tls-key
@@ -346,10 +354,10 @@
              ;; Create tcp-tls netlayer for OCapN networking
              (set! *daemon-netlayer*
                    (spawn ^tcp-tls-netlayer "localhost"
-                          #:port *daemon-tls-port*
+                          #:port tls-port
                           #:key tls-key
                           #:cert tls-cert))
-             (format #t "OCapN tcp-tls netlayer listening on localhost:~a\n" *daemon-tls-port*)
+             (format #t "OCapN tcp-tls netlayer listening on localhost:~a\n" tls-port)
 
              ;; Create mycapn with the tcp-tls netlayer
              (set! *daemon-mycapn* (spawn-mycapn *daemon-netlayer*))
