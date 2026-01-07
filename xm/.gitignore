@@ -28,3 +28,6 @@
 *.dylib
 *.so
 *.a
+
+# Distribution artifacts
+/dist/

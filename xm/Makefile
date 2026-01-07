@@ -1,7 +1,7 @@
-# xm - Cross Memory CLI
-# Makefile for building, testing, and running the xm agent memory system
+# xm - Linked Memory CLI
+# Makefile for building, testing, distributing, and running the xm agent memory system
 
-.PHONY: all build build-debug test test-rust test-guile clean install uninstall run check fmt help patch-goblins unpatch-goblins check-patches
+.PHONY: all build build-debug test test-rust test-guile clean install uninstall run check fmt help patch-goblins unpatch-goblins check-patches dist dist-clean release
 
 # Configuration
 CARGO := cargo
@@ -158,7 +158,7 @@ unpatch-goblins: ## Reverse macOS patches from Goblins netlayers (requires sudo)
 
 ## Cleanup
 
-clean: ## Remove build artifacts
+clean: dist-clean ## Remove build artifacts
 	$(CARGO) clean
 	rm -rf /tmp/xm-make-test /tmp/xm-cli-make-test
 
@@ -170,10 +170,40 @@ clean-store: ## Remove test stores
 docs: ## Generate Rust documentation
 	$(CARGO) doc --no-deps --open
 
+## Distribution
+
+DIST_DIR := dist
+DIST_NAME := xm-dist
+PLATFORM := $(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m)
+
+dist: build ## Create distribution archive
+	@echo "Creating distribution for $(PLATFORM)..."
+	@mkdir -p $(DIST_DIR)/$(DIST_NAME)/lib
+	@mkdir -p $(DIST_DIR)/$(DIST_NAME)/share/guile/site/3.0/xm/cli
+	@mkdir -p $(DIST_DIR)/$(DIST_NAME)/bin
+	@# Copy library
+	@cp $(BUILD_DIR)/$(LIB_NAME).dylib $(DIST_DIR)/$(DIST_NAME)/lib/ 2>/dev/null || \
+	 cp $(BUILD_DIR)/$(LIB_NAME).so $(DIST_DIR)/$(DIST_NAME)/lib/ 2>/dev/null || true
+	@# Copy Guile modules
+	@cp $(GUILE_MODULES)/xm/*.scm $(DIST_DIR)/$(DIST_NAME)/share/guile/site/3.0/xm/
+	@cp $(GUILE_MODULES)/xm/cli/*.scm $(DIST_DIR)/$(DIST_NAME)/share/guile/site/3.0/xm/cli/
+	@# Copy wrapper script
+	@cp bin/xm $(DIST_DIR)/$(DIST_NAME)/bin/
+	@chmod +x $(DIST_DIR)/$(DIST_NAME)/bin/xm
+	@# Create archive
+	@cd $(DIST_DIR) && tar -czvf xm-$(PLATFORM).tar.gz $(DIST_NAME)
+	@echo "Distribution created: $(DIST_DIR)/xm-$(PLATFORM).tar.gz"
+
+dist-clean: ## Remove distribution artifacts
+	rm -rf $(DIST_DIR)
+
+release: ## Create a new release (usage: make release TYPE=patch|minor|major)
+	@./release.sh $(TYPE)
+
 ## Help
 
 help: ## Show this help message
-	@echo "xm - Cross Memory CLI"
+	@echo "xm - Linked Memory CLI"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
@@ -181,7 +211,9 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Examples:"
-	@echo "  make build          # Build the project"
-	@echo "  make test           # Run all tests"
+	@echo "  make build              # Build the project"
+	@echo "  make test               # Run all tests"
+	@echo "  make dist               # Create distribution archive"
+	@echo "  make release TYPE=patch # Create new release"
 	@echo "  make run ARGS='node create --type entity'"
 	@echo "  make install PREFIX=/usr/local"
