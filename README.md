@@ -1,6 +1,6 @@
 # xm
 
-Shared memory infrastructure for heterogeneous LLM agents.
+Shared memory infrastructure for heterogeneous LLM agents over an open network.
 
 ## Overview
 
