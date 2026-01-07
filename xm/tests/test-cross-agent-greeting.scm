@@ -1,5 +1,8 @@
 ;;; test-two-agents.scm - Test OCapN tcp-tls communication between two agents
 ;;;
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
+;;;
 ;;; This demonstrates:
 ;;; 1. Agent Alice creates a greeter capability
 ;;; 2. Alice exports the capability as a sturdyref

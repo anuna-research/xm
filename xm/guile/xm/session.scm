@@ -1,7 +1,7 @@
 ;;; xm/session.scm --- Session management for agent interactions
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; Sessions group related interactions and automatically link discoveries.
 ;;; From SPEC-029 Section 4.6: "Sessions group related interactions and

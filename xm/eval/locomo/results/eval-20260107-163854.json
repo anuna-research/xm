@@ -1,0 +1,326 @@
+{
+  "timestamp": "2026-01-07T16:38:54.431635",
+  "git_hash": "4773290157d2e5a4833ddd742d618e0d8c5f0c1b",
+  "model": "gpt-4o-mini-2024-07-18",
+  "api_provider": "openai",
+  "limit": 20,
+  "workers": 1,
+  "shuffle": true,
+  "edu_mode": true,
+  "conversation_id": "conv-26",
+  "memory_stats": {
+    "total_memories": 134,
+    "total_connections": 0,
+    "by_type": {
+      "person": 2,
+      "event": 98,
+      "fact": 31,
+      "biographical": 1,
+      "opinion": 1,
+      "preference": 1
+    }
+  },
+  "summary": {
+    "total_questions": 20,
+    "overall_f1": 0.1972,
+    "judge_correct": 13,
+    "judge_accuracy": 65.0,
+    "f1_by_category": {
+      "single_hop": 0.0538,
+      "temporal": 0.3707,
+      "commonsense": 0.0,
+      "multi_hop": 0.224
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "What precautionary sign did Melanie see at the caf\u00e9?",
+      "expected": "A sign stating that someone is not being able to leave",
+      "generated": "Melanie saw thoughtful signs at the caf\u00e9 on 9 September 2023. However, specific details about the precautionary sign are not mentioned.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D16:16"
+      ],
+      "f1_score": 0.1429,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 2,
+      "question": "What did Melanie paint recently?",
+      "expected": "sunset",
+      "generated": "Melanie recently painted nature-inspired artworks with her kids on 8 July 2023.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D8:6; D9:17"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 3,
+      "question": "When did Melanie get hurt?",
+      "expected": "September 2023",
+      "generated": "September 2023",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D17:8"
+      ],
+      "f1_score": 1.0,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 4,
+      "question": "How long has Melanie been creating art?",
+      "expected": "7 years",
+      "generated": "Melanie has been creating art for seven years as of September 2023.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D16:7"
+      ],
+      "f1_score": 0.1429,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 5,
+      "question": "Who supports Caroline when she has a negative experience?",
+      "expected": "Her mentors, family, and friends",
+      "generated": "Caroline is supported by her friends and family during negative experiences.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D12:1",
+        "D3:11"
+      ],
+      "f1_score": 0.1818,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 6,
+      "question": "Would Melanie be considered an ally to the transgender community?",
+      "expected": "Yes, she is supportive",
+      "generated": "Cannot determine from memory.",
+      "category": 3,
+      "category_name": "commonsense",
+      "evidence": [],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 7,
+      "question": "What pet does Caroline have?",
+      "expected": "guinea pig",
+      "generated": "Caroline has a pet guinea pig named Oscar.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D13:3"
+      ],
+      "f1_score": 0.4444,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 8,
+      "question": "What kind of art does Caroline make?",
+      "expected": "abstract art",
+      "generated": "Caroline makes art that focuses on expressing her trans experience, promoting acceptance for the LGBTQ+ community, and she creates paintings that explore her journey towards self-acceptance. She has a painting titled \"Embracing Identity\" and often uses her art to convey themes of freedom and authenticity.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D11:12",
+        "D11:8",
+        "D9:14"
+      ],
+      "f1_score": 0.0541,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 9,
+      "question": "What events has Caroline participated in to help children?",
+      "expected": "Mentoring program, school speech",
+      "generated": "Caroline has participated in the following events to help children:\n\n1. Researched adoption agencies in May 2023 to fulfill her dream of having a family.\n2. Chosen an adoption agency that helps LGBTQ+ individuals with adoption.\n3. Is focused on creating a family for kids who need a loving home.\n4. Creating a library with lots of kids' books, including classics and educational books for when she has kids.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D9:2",
+        "D3:3"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 10,
+      "question": "What book did Melanie read from Caroline's suggestion?",
+      "expected": "\"Becoming Nicole\"",
+      "generated": "Cannot determine from memory.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D7:11",
+        "D17:10"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 11,
+      "question": "When did Caroline go to a pride parade during the summer?",
+      "expected": "The week before 3 July 2023",
+      "generated": "Caroline attended the LGBTQ+ pride parade on **26 June 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D5:1"
+      ],
+      "f1_score": 0.1429,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 12,
+      "question": "How did Melanie feel after the accident?",
+      "expected": "Grateful and thankful for her family",
+      "generated": "Melanie felt scared after the accident, but her son was okay and they handled the situation well with reassurance from their parents.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D18:5"
+      ],
+      "f1_score": 0.0833,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 13,
+      "question": "When did Melanie run a charity race?",
+      "expected": "The sunday before 25 May 2023",
+      "generated": "Melanie ran a charity race for mental health on **20 May 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D2:1"
+      ],
+      "f1_score": 0.25,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 14,
+      "question": "How often does Melanie go to the beach with her kids?",
+      "expected": "once or twice a year",
+      "generated": "Melanie usually goes to the beach with her kids once or twice a year.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D10:10"
+      ],
+      "f1_score": 0.5,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 15,
+      "question": "When did Caroline go biking with friends?",
+      "expected": "The weekend before 13 September 2023",
+      "generated": "Caroline went biking with friends on 9 September 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D16:1"
+      ],
+      "f1_score": 0.2857,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 16,
+      "question": "What activities has Melanie done with her family?",
+      "expected": "Pottery, painting, camping, museum, swimming, hiking",
+      "generated": "Melanie has done the following activities with her family:\n\n1. Swimming with her kids\n2. Camping in June 2023\n3. Family day with games and food on 9 June 2023\n4. Camping in the mountains on 20 June 2023\n5. Visiting the museum for the dinosaur exhibit on 5 July 2023\n6. Pottery workshop where they made pots together on 7 July 2023\n7. Painting nature-inspired artworks together on 8 July 2023\n8. Hiking in the mountains and exploring forests",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D8:4",
+        "D8:6",
+        "D9:1",
+        "D6:4",
+        "D1:18",
+        "D3:14"
+      ],
+      "f1_score": 0.0408,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 17,
+      "question": "When did Caroline go to the LGBTQ conference?",
+      "expected": "10 July 2023",
+      "generated": "Caroline attended the LGBTQ conference on **10 July 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D7:1"
+      ],
+      "f1_score": 0.5455,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 18,
+      "question": "What does Melanie do to destress?",
+      "expected": "Running, pottery",
+      "generated": "Melanie destresses by:\n- Painting\n- Running\n- Playing the violin\n- Attending pottery classes\n- Spending time with her pets (dog Luna and cat Oliver)",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D7:22",
+        "D5:4"
+      ],
+      "f1_score": 0.1,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 19,
+      "question": "How do Melanie and Caroline describe their journey through life together?",
+      "expected": "An ongoing adventure of learning and growing.",
+      "generated": "Melanie and Caroline describe their journey through life together as one filled with love, growth, and support. They share a passion for creative expression, as seen in their interests like painting and pottery. Their journeys also emphasize strong family values, outdoor activities, and the importance of mental health. They support each other in their endeavors, such as Caroline's desire to create a family and pursue a counseling career, while Melanie enjoys sharing meaningful experiences with her children and engaging in family activities. Together, they appreciate the beauty of life and the comfort of community support.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D17:25"
+      ],
+      "f1_score": 0.0308,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 20,
+      "question": "When did Caroline draw a self-portrait?",
+      "expected": "The week before 23 August 2023",
+      "generated": "Cannot determine from memory.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D13:11"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 ;;; xm/cli/sync.scm --- Subscribe and Sync commands for CLI
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; Implements subscribe/sync commands per SPEC-029 Section 5.19.
 ;;; Subscribe provides real-time change notifications as NDJSON stream.

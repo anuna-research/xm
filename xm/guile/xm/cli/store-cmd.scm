@@ -1,7 +1,7 @@
 ;;; xm/cli/store-cmd.scm --- Store management commands for CLI
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; Implements store compact/backup/restore/info commands per SPEC-029 Section 5.21.
 ;;; Store commands provide maintenance and administration operations.

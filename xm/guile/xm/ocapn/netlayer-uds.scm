@@ -1,7 +1,7 @@
 ;;; xm/ocapn/netlayer-uds.scm --- Unix Domain Socket netlayer for OCapN
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; macOS-compatible Unix Domain Socket netlayer for OCapN.
 ;;;

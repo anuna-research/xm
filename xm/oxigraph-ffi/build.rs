@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Build script to generate C headers using cbindgen
 
 fn main() {

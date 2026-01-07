@@ -1,0 +1,321 @@
+{
+  "timestamp": "2026-01-07T16:06:59.336716",
+  "git_hash": "a9a7fb072836243b4b7ca55ce1601ba0bc795765",
+  "model": "gpt-4o-mini-2024-07-18",
+  "api_provider": "openai",
+  "limit": 20,
+  "workers": 4,
+  "shuffle": true,
+  "conversation_id": "conv-26",
+  "memory_stats": {
+    "total_memories": 191,
+    "total_connections": 0,
+    "by_type": {
+      "person": 3,
+      "event": 51,
+      "statement": 17,
+      "fact": 43,
+      "preference": 16,
+      "opinion": 19,
+      "activity": 28,
+      "biographical": 11,
+      "relationship": 2,
+      "Activity": 1
+    }
+  },
+  "summary": {
+    "total_questions": 20,
+    "overall_f1": 0.2326,
+    "judge_correct": 11,
+    "judge_accuracy": 55.0,
+    "f1_by_category": {
+      "single_hop": 0.2105,
+      "temporal": 0.3178,
+      "commonsense": 0.0,
+      "multi_hop": 0.2202
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "What happened to Melanie's son on their road trip?",
+      "expected": "He got into an accident",
+      "generated": "Melanie's son got into an accident during a road trip on **20 October 2023**.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D18:1"
+      ],
+      "f1_score": 0.375,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 2,
+      "question": "Would Melanie be considered a member of the LGBTQ community?",
+      "expected": "Likely no, she does not refer to herself as part of it",
+      "generated": "Cannot determine from memory.",
+      "category": 3,
+      "category_name": "commonsense",
+      "evidence": [],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 3,
+      "question": "When did Melanie get hurt?",
+      "expected": "September 2023",
+      "generated": "Cannot determine from memory.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D17:8"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 4,
+      "question": "When did Caroline and Melanie go to a pride fesetival together?",
+      "expected": "2022",
+      "generated": "Caroline and Melanie attended a pride festival together on **17 August 2022**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D12:15"
+      ],
+      "f1_score": 0.1818,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 5,
+      "question": "When did Melanie go to the museum?",
+      "expected": "5 July 2023",
+      "generated": "Melanie went to the museum on **5 July 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D6:4"
+      ],
+      "f1_score": 0.5455,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 6,
+      "question": "What does Caroline's necklace symbolize?",
+      "expected": "love, faith, and strength",
+      "generated": "Cannot determine from memory.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D4:3"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 7,
+      "question": "Which  classical musicians does Melanie enjoy listening to?",
+      "expected": "Bach and Mozart",
+      "generated": "Bach, Mozart",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D15:28"
+      ],
+      "f1_score": 1.0,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 8,
+      "question": "What painting did Melanie show to Caroline on October 13, 2023?",
+      "expected": "A painting inspired by sunsets with a pink sky.",
+      "generated": "Melanie showed Caroline an abstract painting on October 13, 2023.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D17:12"
+      ],
+      "f1_score": 0.125,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 9,
+      "question": "What did Caroline take away from the book \"Becoming Nicole\"?",
+      "expected": "Lessons on self-acceptance and finding support",
+      "generated": "Caroline's favorite book is \"Becoming Nicole\" by Amy Ellis Nutt. However, specific takeaways or insights from the book are not mentioned in the available memories.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D7:13"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 10,
+      "question": "What does Melanie do to keep herself busy during her pottery break?",
+      "expected": "Read a book and paint.",
+      "generated": "During her pottery break, Melanie keeps herself busy by:  \n- Painting  \n- Swimming  \n- Running  \n- Reading  \n- Playing the violin",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D17:10"
+      ],
+      "f1_score": 0.2222,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 11,
+      "question": "How did Melanie feel about her family after the accident?",
+      "expected": "They are important and mean the world to her",
+      "generated": "Melanie felt that family is super important to her, especially after the accident. They mean the world to her.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D18:5"
+      ],
+      "f1_score": 0.5455,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 12,
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "generated": "Caroline went to the LGBTQ support group on **7 May 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D1:3"
+      ],
+      "f1_score": 0.4615,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 13,
+      "question": "What career path has Caroline decided to persue?",
+      "expected": "counseling or mental health for Transgender people",
+      "generated": "Caroline has decided to pursue a career in counseling or working in mental health.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D4:13",
+        "D1:11"
+      ],
+      "f1_score": 0.4211,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 14,
+      "question": "What did Caroline find in her neighborhood during her walk?",
+      "expected": "a rainbow sidewalk",
+      "generated": "Caroline found a vibrant rainbow sidewalk while walking in her neighborhood on August 25, 2023.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D14:23"
+      ],
+      "f1_score": 0.25,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 15,
+      "question": "What creative project do Mel and her kids do together besides pottery?",
+      "expected": "painting",
+      "generated": "Cannot determine from memory.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D8:5"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 16,
+      "question": "When is Melanie's daughter's birthday?",
+      "expected": "13 August",
+      "generated": "Melanie's daughter's birthday is on **13 August 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "evidence": [
+        "D11:1"
+      ],
+      "f1_score": 0.4,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 17,
+      "question": "How did Melanie's children handle the accident?",
+      "expected": "They were scared but resilient",
+      "generated": "Cannot determine from memory.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D18:7"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 18,
+      "question": "What did Melanie and her family see during their camping trip last year?",
+      "expected": "Perseid meteor shower",
+      "generated": "During their camping trip last year, Melanie and her family explored nature, roasted marshmallows around the campfire, and went hiking.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D10:14"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 19,
+      "question": "Did Melanie make the black and white bowl in the photo?",
+      "expected": "Yes",
+      "generated": "Yes, Melanie made a bowl in pottery class with a black and white design on **2 July 2023**.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "evidence": [
+        "D5:8"
+      ],
+      "f1_score": 0.125,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 20,
+      "question": "What kind of art does Caroline make?",
+      "expected": "abstract art",
+      "generated": "Cannot determine from memory.",
+      "category": 1,
+      "category_name": "single_hop",
+      "evidence": [
+        "D11:12",
+        "D11:8",
+        "D9:14"
+      ],
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    }
+  ]
+}

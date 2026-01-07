@@ -1,7 +1,7 @@
 ;;; xm/cli/io.scm --- Import/Export commands for CLI
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; Implements import/export commands per SPEC-029 Section 5.18.
 ;;; Provides data portability through RDF serialization formats.

@@ -1,7 +1,7 @@
 ;;; xm/cli/daemon.scm --- Daemon management for xm
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; This module implements the daemon management from SPEC-029 Section 5.18.
 ;;; The daemon provides the Goblins runtime, manages the store, and handles

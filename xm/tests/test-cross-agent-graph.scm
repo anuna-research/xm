@@ -1,5 +1,8 @@
 ;;; test-graph-sharing.scm - Test cross-agent graph access via OCapN
 ;;;
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
+;;;
 ;;; This demonstrates:
 ;;; 1. Agent Alice creates a knowledge graph with data
 ;;; 2. Alice creates a read-only capability for her graph

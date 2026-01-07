@@ -1,7 +1,7 @@
 ;;; xm/store.scm --- FFI bindings to Oxigraph via libxm_ffi
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; This module provides Guile bindings to the Oxigraph RDF store
 ;;; via the xm_ffi Rust library.

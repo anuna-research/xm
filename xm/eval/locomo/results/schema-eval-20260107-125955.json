@@ -1,0 +1,246 @@
+{
+  "timestamp": "2026-01-07T12:59:55.760342",
+  "model": "gpt-4o-mini-2024-07-18",
+  "approach": "schema.org",
+  "limit": 20,
+  "memory_stats": {
+    "persons": 2,
+    "events": 34,
+    "places": 9,
+    "works": 16,
+    "organizations": 2,
+    "pets": 5,
+    "preferences": 11,
+    "relationships": 4,
+    "activities": 25,
+    "total": 108
+  },
+  "summary": {
+    "total_questions": 20,
+    "overall_f1": 0.1536,
+    "judge_correct": 8,
+    "judge_accuracy": 40.0
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "generated": "Caroline attended the LGBTQ support group on May 7, 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.5,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 2,
+      "question": "When did Melanie paint a sunrise?",
+      "expected": "2022",
+      "generated": "Melanie painted a sunrise on January 1, 2022.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.25,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 3,
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "generated": "Caroline would likely pursue fields related to:\n\n- Music (piano, guitar)\n- Art and Design (drawing, art creation)\n- Psychology or Counseling (supporting needy kids, self-acceptance)",
+      "category": 3,
+      "category_name": "commonsense",
+      "f1_score": 0.1667,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 4,
+      "question": "What did Caroline research?",
+      "expected": "Adoption agencies",
+      "generated": "Caroline researched and created the following works:\n\n1. **Painting for LGBTQ art show** - Unity and strength (2023-07-01)\n2. **Embracing Identity** - Finding comfort and love in being yourself\n3. **Self-portrait** - Self-identity (2023-08-16)\n4. **Sunset painting** - Sunset (2023-08-18)\n5. **Stained glass window** - Personal journey\n6. **Painting about gender identity** - Transgender identity and self-acceptance (2023-09-12)\n7. **Abstract painting** - Self-expression (2023-10-13)",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 5,
+      "question": "What is Caroline's identity?",
+      "expected": "Transgender woman",
+      "generated": "Caroline's identity is a transgender woman.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.5714,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 6,
+      "question": "When did Melanie run a charity race?",
+      "expected": "The sunday before 25 May 2023",
+      "generated": "Melanie ran a charity race on **May 20, 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.3077,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 7,
+      "question": "When is Melanie planning on going camping?",
+      "expected": "June 2023",
+      "generated": "Melanie is planning on going camping on **October 19, 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.1818,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 8,
+      "question": "What is Caroline's relationship status?",
+      "expected": "Single",
+      "generated": "Caroline's relationship status includes a friendship with Melanie.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 9,
+      "question": "When did Caroline give a speech at a school?",
+      "expected": "The week before 9 June 2023",
+      "generated": "Caroline gave a speech at a school on **June 2, 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.2857,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 10,
+      "question": "When did Caroline meet up with her friends, family, and mentors?",
+      "expected": "The week before 9 June 2023",
+      "generated": "Caroline met up with her friends, family, and mentors on the following dates:\n\n- **June 29, 2023** - Picnic\n- **October 14, 2023** - Road trip (with Melanie)",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.16,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 11,
+      "question": "How long has Caroline had her current group of friends for?",
+      "expected": "4 years",
+      "generated": "The duration of Caroline's current group of friends is unknown.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 12,
+      "question": "Where did Caroline move from 4 years ago?",
+      "expected": "Sweden",
+      "generated": "The data does not provide specific information about where Caroline moved from four years ago.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 13,
+      "question": "How long ago was Caroline's 18th birthday?",
+      "expected": "10 years ago",
+      "generated": "Caroline's 18th birthday was on **May 7, 2023**. Since today is October 14, 2023, her 18th birthday was **5 months ago**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.1,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 14,
+      "question": "What career path has Caroline decided to persue?",
+      "expected": "counseling or mental health for Transgender people",
+      "generated": "Caroline's career path is currently listed as \"unknown.\"",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 15,
+      "question": "Would Caroline still want to pursue counseling as a career if she hadn't received support growing up?",
+      "expected": "Likely no",
+      "generated": "It's difficult to determine Caroline's career aspirations without specific information about her background and motivations. However, if she had not received support growing up, it might have influenced her decision to pursue counseling, as support often plays a crucial role in shaping career choices and aspirations.",
+      "category": 3,
+      "category_name": "commonsense",
+      "f1_score": 0.0,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 16,
+      "question": "What activities does Melanie partake in?",
+      "expected": "pottery, camping, painting, swimming",
+      "generated": "Melanie partakes in the following activities:\n\n1. Painting (regularly)\n2. Swimming (occasionally)\n3. Running (daily)\n4. Reading (daily)\n5. Playing violin (daily)\n6. Camping (once a year)\n7. Hiking (occasionally)\n8. Pottery (occasionally)\n9. Clarinet (expression and relaxation)",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0625,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 17,
+      "question": "When did Melanie sign up for a pottery class?",
+      "expected": "2 July 2023",
+      "generated": "Melanie signed up for a pottery class on **August 24, 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.1538,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 18,
+      "question": "When is Caroline going to the transgender conference?",
+      "expected": "July 2023",
+      "generated": "Caroline is going to the transgender conference on **July 31, 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.3333,
+      "llm_judge": "CORRECT",
+      "llm_judge_score": 1
+    },
+    {
+      "index": 19,
+      "question": "Where has Melanie camped?",
+      "expected": "beach, mountains, forest",
+      "generated": "Melanie has camped at the following times:\n\n1. **Family camping trip** on **August 12, 2022**\n2. **Camping trip** on **June 1, 2023**\n3. **Camping trip** on **August 26, 2023**\n4. **Camping trip** on **October 19, 2023**",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    },
+    {
+      "index": 20,
+      "question": "What do Melanie's kids like?",
+      "expected": "dinosaurs, nature",
+      "generated": "Melanie's kids enjoy:\n\n- Swimming (occasionally)\n- Camping (family bonding)\n- Hiking (family bonding)",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG",
+      "llm_judge_score": 0
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 ;;; xm/cli/keys.scm --- Key management for xm agent identity
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; This module manages the TLS keys that form the persistent identity
 ;;; of an xm agent. The SHA256 hash of the certificate is used in OCapN

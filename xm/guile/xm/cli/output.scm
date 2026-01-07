@@ -1,7 +1,7 @@
 ;;; xm/cli/output.scm --- Output formatting for CLI
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; This module handles JSON and human-readable output formatting
 ;;; per SPEC-029 Section 5.5.

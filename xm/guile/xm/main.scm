@@ -1,7 +1,7 @@
 ;;; xm/main.scm --- Main entry point for xm CLI
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; This is the main entry point for the xm CLI tool.
 ;;; It handles argument parsing, daemon connection, and command dispatch.

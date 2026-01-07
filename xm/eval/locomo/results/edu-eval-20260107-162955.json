@@ -1,0 +1,227 @@
+{
+  "timestamp": "2026-01-07T16:29:55.885566",
+  "model": "gpt-4o-mini-2024-07-18",
+  "approach": "EDU (Elementary Discourse Units)",
+  "shuffle": true,
+  "limit": 20,
+  "edu_stats": {
+    "total_edus": 179,
+    "by_subject": {
+      "caroline": 103,
+      "melanie": 76
+    }
+  },
+  "summary": {
+    "total": 20,
+    "f1": 0.1385,
+    "accuracy": 50.0,
+    "f1_by_category": {
+      "single_hop": 0.0663,
+      "temporal": 0.2734,
+      "commonsense": 0.0513,
+      "multi_hop": 0.2314
+    }
+  },
+  "questions": [
+    {
+      "index": 1,
+      "question": "What pet does Caroline have?",
+      "expected": "guinea pig",
+      "generated": "Cannot determine from memory.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 2,
+      "question": "When did Caroline pass the adoption interview?",
+      "expected": "The Friday before 22 October 2023",
+      "generated": "20 October 2023",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.5,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 3,
+      "question": "What events has Caroline participated in to help children?",
+      "expected": "Mentoring program, school speech",
+      "generated": "Caroline has participated in the following events to help children:\n\n1. School event on 2 June 2023 - Presented about her transgender journey and encouraged students to get involved in the LGBTQ community.\n2. Researching adoption agencies (as of 25 May 2023) - Part of her dream to provide a loving home to kids in need.\n3. Expressed a desire to create a family for kids in need and face the challenges of being a single parent (as of 25 May 2023).",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0377,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 4,
+      "question": "When did Melanie's friend adopt a child?",
+      "expected": "2022",
+      "generated": "Melanie's friend adopted a child last year, as of 13 October 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.0,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 5,
+      "question": "In what ways is Caroline participating in the LGBTQ community?",
+      "expected": "Joining activist group, going to pride parades, participating in an art show, mentoring program",
+      "generated": "Caroline is participating in the LGBTQ community by:\n\n1. Attending an LGBTQ support group (7 May 2023).\n2. Talking about her transgender journey and encouraging students to get involved in the community at a school event (2 June 2023).\n3. Researching adoption agencies that support LGBTQ+ individuals as she dreams of starting a family (25 May 2023).\n4. Expressing gratitude for the support she has received throughout her journey (9 June 2023) and wanting to share her story to inspire others.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0678,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 6,
+      "question": "What transgender-specific events has Caroline attended?",
+      "expected": "Poetry reading, conference",
+      "generated": "Caroline attended the following transgender-specific events:\n\n1. LGBTQ support group on 7 May 2023.\n2. School event on 2 June 2023 where she talked about her transgender journey.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 7,
+      "question": "What kind of art does Caroline make?",
+      "expected": "abstract art",
+      "generated": "Caroline creates art that expresses her trans experience, advocates for the LGBTQ+ community, represents inclusivity and diversity, and explores her journey of self-discovery and acceptance.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0909,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 8,
+      "question": "When did Caroline go to the adoption meeting?",
+      "expected": "The friday before 15 July 2023",
+      "generated": "Caroline went to the adoption meeting on **7 July 2023**.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.2857,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 9,
+      "question": "Who supports Caroline when she has a negative experience?",
+      "expected": "Her mentors, family, and friends",
+      "generated": "Caroline is supported by her friends, family, and mentors.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.4,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 10,
+      "question": "Would Caroline pursue writing as a career option?",
+      "expected": "LIkely no; though she likes reading, she wants to be a counselor",
+      "generated": "Cannot determine from memory.",
+      "category": 3,
+      "category_name": "commonsense",
+      "f1_score": 0.0,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 11,
+      "question": "Where did Caroline move from 4 years ago?",
+      "expected": "Sweden",
+      "generated": "Caroline moved from her home country.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 12,
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "generated": "Caroline would likely pursue fields in counseling or mental health.",
+      "category": 3,
+      "category_name": "commonsense",
+      "f1_score": 0.1538,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 13,
+      "question": "Would Melanie be considered an ally to the transgender community?",
+      "expected": "Yes, she is supportive",
+      "generated": "Cannot determine from memory.",
+      "category": 3,
+      "category_name": "commonsense",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 14,
+      "question": "What items has Melanie bought?",
+      "expected": "Figurines, shoes",
+      "generated": "Cannot determine from memory.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 15,
+      "question": "What was the poetry reading that Caroline attended about?",
+      "expected": "It was a transgender poetry reading where transgender people shared their stories.",
+      "generated": "The poetry reading that Caroline attended was a transgender poetry reading where transgender people shared their stories through poetry.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "f1_score": 0.7826,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 16,
+      "question": "Where did Oliver hide his bone once?",
+      "expected": "In Melanie's slipper",
+      "generated": "Cannot determine from memory.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 17,
+      "question": "What was grandma's gift to Caroline?",
+      "expected": "necklace",
+      "generated": "Caroline received a necklace as a gift from her grandma, which symbolizes love, faith, and strength.",
+      "category": 4,
+      "category_name": "multi_hop",
+      "f1_score": 0.1429,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 18,
+      "question": "What subject have Caroline and Melanie both painted?",
+      "expected": "Sunsets",
+      "generated": "Both Caroline and Melanie have painted a lake sunrise.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    },
+    {
+      "index": 19,
+      "question": "When did Caroline join a mentorship program?",
+      "expected": "The weekend before 17 July 2023",
+      "generated": "Caroline joined a mentorship program on 8 July 2023.",
+      "category": 2,
+      "category_name": "temporal",
+      "f1_score": 0.3077,
+      "llm_judge": "CORRECT"
+    },
+    {
+      "index": 20,
+      "question": "What are Melanie's pets' names?",
+      "expected": "Oliver, Luna, Bailey",
+      "generated": "Cannot determine from memory.",
+      "category": 1,
+      "category_name": "single_hop",
+      "f1_score": 0.0,
+      "llm_judge": "WRONG"
+    }
+  ]
+}

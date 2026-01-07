@@ -1,7 +1,7 @@
 ;;; xm/sync.scm --- Pubsub and synchronization primitives
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; This module implements the synchronization layer from SPEC-029 Section 4.7.
 ;;; It wraps the gatekeeper with change notifications and provides

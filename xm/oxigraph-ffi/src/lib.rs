@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! C FFI bindings for Oxigraph
 //!
 //! This crate exposes Oxigraph's RDF store functionality via C ABI,

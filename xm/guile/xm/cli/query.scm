@@ -1,7 +1,7 @@
 ;;; xm/cli/query.scm --- Query commands for CLI
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; Implements query sparql/nodes/backlinks/path commands per SPEC-029 Section 5.13.
 

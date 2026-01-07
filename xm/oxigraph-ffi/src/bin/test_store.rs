@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Test binary for diagnosing RocksDB issues on macOS
 use oxigraph::store::Store;
 use std::panic;

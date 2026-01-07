@@ -1,7 +1,7 @@
 ;;; xm/gatekeeper.scm --- Graph Gatekeeper actor for xm
 ;;;
-;;; Copyright (C) 2026 Digital Services Team
-;;; SPDX-License-Identifier: Apache-2.0
+;;; SPDX-FileCopyrightText: 2026 Hugo O'Connor, Anuna Research
+;;; SPDX-License-Identifier: AGPL-3.0-or-later
 ;;;
 ;;; The Graph Gatekeeper is the core storage actor in xm. It provides:
 ;;; - Direct access to Oxigraph SPARQL operations
