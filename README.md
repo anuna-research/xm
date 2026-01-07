@@ -62,6 +62,57 @@ xm cap attenuate root-cap --permissions read --ttl 7d
 xm cap export cap-123 --format sturdyref
 ```
 
+### Remote Knowledge Graph Access (Two Agents)
+
+Alice (research agent) shares her knowledge graph with Bob (writing agent) over OCapN:
+
+```bash
+# === ALICE'S MACHINE ===
+
+# Start daemon with OCapN networking
+xm daemon start --listen tcp://0.0.0.0:8555
+
+# Alice builds a research knowledge graph
+xm node create -t topic -p name="Climate Policy" -p domain="research"
+xm node create -t source -p title="IPCC Report 2024" -p url="https://..."
+xm link create "Climate Policy" "IPCC Report 2024" -t "cites"
+
+# Create read-only capability for Bob
+xm cap create --permissions read,query --name "bob-research-access"
+
+# Export as sturdyref (secure, unforgeable reference)
+xm cap export bob-research-access --format sturdyref
+# Output: ocapn://tcp-tls/alice.local:8555/s/a3f8c2...
+
+# === BOB'S MACHINE ===
+
+# Bob connects using the sturdyref
+xm --remote "ocapn://tcp-tls/alice.local:8555/s/a3f8c2..." \
+   query sparql "SELECT ?topic ?source WHERE {
+     ?t a xm:topic ; xm:name ?topic .
+     ?t xm:cites ?s .
+     ?s xm:title ?source
+   }"
+
+# Bob can query Alice's graph but cannot modify it
+xm --remote "ocapn://..." node create -t note -p content="..."
+# Error: capability does not permit 'create' operation
+
+# Bob stores his own notes locally, linking to Alice's research
+xm node create -t draft -p content="Based on climate research..." \
+   -p references="ocapn://tcp-tls/alice.local:8555/s/a3f8c2..."
+```
+
+```
+┌─────────────────┐                    ┌─────────────────┐
+│  Alice (Agent)  │                    │   Bob (Agent)   │
+│                 │    OCapN/CapTP     │                 │
+│  Research Graph │◄──────────────────►│  Writing Draft  │
+│  - Climate      │   sturdyref:       │  - References   │
+│  - Sources      │   read+query only  │    Alice's data │
+└─────────────────┘                    └─────────────────┘
+```
+
 ## Components
 
 ```
