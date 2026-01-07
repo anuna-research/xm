@@ -9,9 +9,10 @@ steps:
       # Install system dependencies
       - apt-get update && apt-get install -y curl build-essential pkg-config guile-3.0 guile-3.0-dev
 
-      # Install Rust
+      # Install latest Rust (needed for oxigraph edition2024)
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       - . "$HOME/.cargo/env"
+      - rustup update
 
       # Build the Rust FFI library
       - cargo build --release

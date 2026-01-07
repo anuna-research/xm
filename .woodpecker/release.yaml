@@ -12,11 +12,16 @@ steps:
       - 'if [ -n "$$TEST_SECRET" ]; then echo "SECRET IS SET"; else echo "SECRET IS EMPTY"; fi'
 
   - name: build-linux
-    image: rust:1.83-bookworm
+    image: debian:bookworm
     directory: xm
     commands:
       # Install system dependencies
-      - apt-get update && apt-get install -y guile-3.0 guile-3.0-dev pkg-config
+      - apt-get update && apt-get install -y guile-3.0 guile-3.0-dev pkg-config curl build-essential
+
+      # Install latest Rust (needed for oxigraph edition2024)
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - . "$HOME/.cargo/env"
+      - rustup update
 
       # Build the Rust FFI library
       - cargo build --release
