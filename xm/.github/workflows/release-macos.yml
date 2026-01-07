@@ -1,0 +1,87 @@
+name: Build macOS
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Install Guile
+        run: |
+          brew install guile
+          echo "GUILE_LOAD_PATH=$(pwd)/guile:/opt/homebrew/share/guile/site/3.0:/usr/local/share/guile/site/3.0" >> $GITHUB_ENV
+          echo "XM_LIB_PATH=$(pwd)/target/release" >> $GITHUB_ENV
+
+      - name: Build
+        run: make build
+
+      - name: Run tests
+        run: |
+          cargo test --release
+          # Basic Guile integration test
+          rm -rf /tmp/xm-ci-test
+          guile --no-auto-compile -c '
+            (use-modules (xm store))
+            (let ((store (make-store "/tmp/xm-ci-test")))
+              (store-update store "INSERT DATA { <http://test/s> <http://test/p> \"value\" }")
+              (let ((count (store-count store)))
+                (store-close store)
+                (if (= count 1)
+                    (display "PASS: Store test\n")
+                    (error "FAIL"))))'
+          rm -rf /tmp/xm-ci-test
+
+      - name: Create distribution
+        run: make dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xm-darwin-${{ matrix.arch }}
+          path: dist/xm-darwin-${{ matrix.arch }}.tar.gz
+
+      - name: Install AWS CLI
+        run: |
+          brew install awscli
+
+      - name: Upload to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          export AWS_DEFAULT_REGION=auto
+          R2_ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          BUCKET="anuna-files"
+          PROJECT="xm"
+          TAG="${GITHUB_REF_NAME}"
+
+          # Upload to versioned path
+          aws s3 cp dist/xm-darwin-${{ matrix.arch }}.tar.gz \
+            "s3://${BUCKET}/${PROJECT}/${TAG}/xm-darwin-${{ matrix.arch }}.tar.gz" \
+            --endpoint-url "$R2_ENDPOINT"
+
+          # Upload to latest
+          aws s3 cp dist/xm-darwin-${{ matrix.arch }}.tar.gz \
+            "s3://${BUCKET}/${PROJECT}/latest/xm-darwin-${{ matrix.arch }}.tar.gz" \
+            --endpoint-url "$R2_ENDPOINT"
+
+          echo "Uploaded xm-darwin-${{ matrix.arch }}.tar.gz to:"
+          echo "  https://files.anuna.io/${PROJECT}/${TAG}/"
+          echo "  https://files.anuna.io/${PROJECT}/latest/"
