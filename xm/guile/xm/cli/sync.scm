@@ -112,7 +112,8 @@
    Note: Full OCapN synchronization requires a running daemon.
    This command provides a basic implementation using HTTP endpoints."
 
-  (let* ((remote-uri (assoc-ref opts "remote"))
+  (let* ((remote-uri (or (assoc-ref opts "remote")
+                         (assoc-ref global-opts "remote")))  ; Check both local and global opts
          (graph-opt (or (assoc-ref opts "graph")
                         (assoc-ref opts "g")))
          (direction (or (assoc-ref opts "direction") "bidirectional"))

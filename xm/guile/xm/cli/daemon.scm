@@ -529,8 +529,8 @@
       (let* ((request (catch #t
                         (lambda () (json->scm line))
                         (lambda _ `((error . "invalid JSON")))))
-             (method (assoc-ref request "method"))
-             (params (or (assoc-ref request "params") '()))
+             (method (assoc-ref request 'method))
+             (params (or (assoc-ref request 'params) '()))
              (response (dispatch-daemon-method method params)))
         ;; Send response
         (display (scm->json response) sock)
@@ -543,14 +543,14 @@
     ((ping) `((result . "pong")))
 
     ((cap-export)
-     (let ((label (assoc-ref params "label")))
+     (let ((label (assoc-ref params 'label)))
        (if (not label)
            `((error . "missing label parameter"))
            (daemon-cap-export label))))
 
     ((cap-import)
-     (let ((uri (assoc-ref params "uri"))
-           (label (assoc-ref params "label")))
+     (let ((uri (assoc-ref params 'uri))
+           (label (assoc-ref params 'label)))
        (if (not (and uri label))
            `((error . "missing uri or label parameter"))
            (daemon-cap-import uri label))))
@@ -562,9 +562,9 @@
      (daemon-list-listeners))
 
     ((listen)
-     (let ((host (or (assoc-ref params "host") "localhost"))
-           (port (assoc-ref params "port"))
-           (type (or (assoc-ref params "type") "tcp-tls")))
+     (let ((host (or (assoc-ref params 'host) "localhost"))
+           (port (assoc-ref params 'port))
+           (type (or (assoc-ref params 'type) "tcp-tls")))
        (if (not port)
            `((error . "missing port parameter"))
            (daemon-add-listener host port type))))
@@ -576,28 +576,28 @@
                   (listeners . ,(length *daemon-listeners*))))))
 
     ((remote-query)
-     (let ((uri (assoc-ref params "uri"))
-           (sparql (assoc-ref params "sparql")))
+     (let ((uri (assoc-ref params 'uri))
+           (sparql (assoc-ref params 'sparql)))
        (if (not (and uri sparql))
            `((error . "missing uri or sparql parameter"))
            (daemon-remote-query uri sparql))))
 
     ((sync-connect)
-     (let ((uri (assoc-ref params "uri"))
-           (graph (assoc-ref params "graph")))
+     (let ((uri (assoc-ref params 'uri))
+           (graph (assoc-ref params 'graph)))
        (if (not (and uri graph))
            `((error . "missing uri or graph parameter"))
            (daemon-sync-connect uri graph))))
 
     ((sync-execute)
-     (let ((graph (assoc-ref params "graph"))
-           (direction (or (assoc-ref params "direction") "bidirectional")))
+     (let ((graph (assoc-ref params 'graph))
+           (direction (or (assoc-ref params 'direction) "bidirectional")))
        (if (not graph)
            `((error . "missing graph parameter"))
            (daemon-sync-execute graph direction))))
 
     ((sync-disconnect)
-     (let ((graph (assoc-ref params "graph")))
+     (let ((graph (assoc-ref params 'graph)))
        (if (not graph)
            `((error . "missing graph parameter"))
            (daemon-sync-disconnect graph))))
@@ -609,41 +609,41 @@
      (daemon-journal-status))
 
     ((journal-read)
-     (let ((from-seq (or (assoc-ref params "from") 0))
-           (limit (or (assoc-ref params "limit") 100)))
+     (let ((from-seq (or (assoc-ref params 'from) 0))
+           (limit (or (assoc-ref params 'limit) 100)))
        (daemon-journal-read from-seq limit)))
 
     ((journal-append)
-     (let ((event-type (assoc-ref params "type"))
-           (graph (assoc-ref params "graph"))
-           (data (assoc-ref params "data"))
-           (agent (or (assoc-ref params "agent") "cli")))
+     (let ((event-type (assoc-ref params 'type))
+           (graph (assoc-ref params 'graph))
+           (data (assoc-ref params 'data))
+           (agent (or (assoc-ref params 'agent) "cli")))
        (if (not (and event-type data))
            `((error . "missing type or data parameter"))
            (daemon-journal-append event-type graph data agent))))
 
     ;; Core CLI operations via actors
     ((query)
-     (let ((sparql (assoc-ref params "sparql"))
-           (cap-label (assoc-ref params "cap")))
+     (let ((sparql (assoc-ref params 'sparql))
+           (cap-label (assoc-ref params 'cap)))
        (if (not sparql)
            `((error . "missing sparql parameter"))
            (daemon-actor-query sparql cap-label))))
 
     ((insert)
-     (let ((graph (assoc-ref params "graph"))
-           (triples (assoc-ref params "triples"))
-           (cap-label (assoc-ref params "cap"))
-           (agent (or (assoc-ref params "agent") "cli")))
+     (let ((graph (assoc-ref params 'graph))
+           (triples (assoc-ref params 'triples))
+           (cap-label (assoc-ref params 'cap))
+           (agent (or (assoc-ref params 'agent) "cli")))
        (if (not (and graph triples))
            `((error . "missing graph or triples parameter"))
            (daemon-actor-insert graph triples cap-label agent))))
 
     ((delete)
-     (let ((graph (assoc-ref params "graph"))
-           (pattern (assoc-ref params "pattern"))
-           (cap-label (assoc-ref params "cap"))
-           (agent (or (assoc-ref params "agent") "cli")))
+     (let ((graph (assoc-ref params 'graph))
+           (pattern (assoc-ref params 'pattern))
+           (cap-label (assoc-ref params 'cap))
+           (agent (or (assoc-ref params 'agent) "cli")))
        (if (not (and graph pattern))
            `((error . "missing graph or pattern parameter"))
            (daemon-actor-delete graph pattern cap-label agent))))
@@ -1113,33 +1113,40 @@
 ;;; JSON Utilities (simple implementation for daemon protocol)
 ;;; --------------------------------------------------------------------
 
+(define (alist? obj)
+  "Check if OBJ is an association list (list of pairs with symbol/string keys)."
+  (and (pair? obj)
+       (pair? (car obj))
+       (let ((key (caar obj)))
+         (or (symbol? key) (string? key)))))
+
 (define (scm->json obj)
   "Convert Scheme object to JSON string."
   (cond
-   ((null? obj) "null")
+   ((null? obj) "[]")  ; Empty list becomes empty array, not null
    ((eq? obj #t) "true")
    ((eq? obj #f) "false")
    ((number? obj) (number->string obj))
    ((string? obj) (string-append "\"" (json-escape-string obj) "\""))
    ((symbol? obj) (string-append "\"" (symbol->string obj) "\""))
+   ((alist? obj)
+    ;; Alist (object) - list of pairs with symbol/string keys
+    (string-append
+     "{"
+     (string-join
+      (map (lambda (kv)
+             (string-append
+              "\"" (if (string? (car kv)) (car kv) (symbol->string (car kv))) "\": "
+              (scm->json (cdr kv))))
+           obj)
+      ", ")
+     "}"))
    ((pair? obj)
-    (if (and (pair? (car obj)) (not (list? (car obj))))
-        ;; Alist (object)
-        (string-append
-         "{"
-         (string-join
-          (map (lambda (kv)
-                 (string-append
-                  "\"" (if (string? (car kv)) (car kv) (format #f "~a" (car kv))) "\": "
-                  (scm->json (cdr kv))))
-               obj)
-          ", ")
-         "}")
-        ;; List (array)
-        (string-append
-         "["
-         (string-join (map scm->json obj) ", ")
-         "]")))
+    ;; Regular list (array)
+    (string-append
+     "["
+     (string-join (map scm->json obj) ", ")
+     "]"))
    (else (format #f "\"~a\"" obj))))
 
 (define (json-escape-string str)
@@ -1188,14 +1195,15 @@
         (loop)))))
 
 (define (json-read-object port)
-  "Read JSON object."
+  "Read JSON object. Returns alist with symbol keys for consistency with Scheme code."
   (read-char port) ; consume {
   (json-skip-whitespace port)
   (if (char=? (peek-char port) #\})
       (begin (read-char port) '())
       (let loop ((result '()))
         (json-skip-whitespace port)
-        (let* ((key (json-read-string port))
+        (let* ((key-str (json-read-string port))
+               (key (string->symbol key-str))  ; Convert to symbol for assoc-ref
                (_ (begin (json-skip-whitespace port)
                          (read-char port))) ; consume :
                (value (json-read port)))
