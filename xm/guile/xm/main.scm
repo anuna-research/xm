@@ -9,6 +9,7 @@
 (define-module (xm main)
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
+  #:use-module (ice-9 rdelim)
   #:use-module (xm cli parser)
   #:use-module (xm cli output)
   #:use-module (xm cli node)
@@ -453,9 +454,15 @@ Examples:
                                        (acons 'positional positional opts)
                                        global-opts store cap-ref))
                  ((query)
-                  (handle-query-command subcommand
-                                        (acons 'positional positional opts)
-                                        global-opts store cap-ref))
+                  (if remote-uri
+                      ;; Remote query via OCapN
+                      (handle-remote-query subcommand
+                                           (acons 'positional positional opts)
+                                           global-opts remote-uri)
+                      ;; Local query
+                      (handle-query-command subcommand
+                                            (acons 'positional positional opts)
+                                            global-opts store cap-ref)))
                  ((session)
                   (handle-session-command subcommand
                                           (acons 'positional positional opts)
@@ -506,6 +513,82 @@ Examples:
           ;; Close store and exit
           (store-close store)
           (exit (or exit-code 0)))))))
+
+;;; --------------------------------------------------------------------
+;;; Remote Query Handler
+;;; --------------------------------------------------------------------
+
+(define (handle-remote-query subcommand opts global-opts remote-uri)
+  "Handle queries via remote OCapN daemon.
+   REMOTE-URI: sturdyref URI for the remote gatekeeper capability"
+
+  ;; Only sparql subcommand is supported for remote queries currently
+  (case subcommand
+    ((sparql)
+     ;; Check if local daemon is running
+     (if (not (daemon-running?))
+         (begin
+           (output-error "DAEMON_NOT_RUNNING"
+                         "Local daemon must be running for remote queries"
+                         "Start daemon with: xm daemon start"
+                         global-opts)
+           1)
+         ;; Get the SPARQL query
+         (let* ((positional (assoc-ref opts 'positional))
+                (sparql (cond
+                         ((and (pair? positional)
+                               (string=? (car positional) "-"))
+                          ;; Read from stdin
+                          (read-all-stdin))
+                         ((pair? positional)
+                          (car positional))
+                         (else #f))))
+
+           (unless sparql
+             (output-error "MISSING_QUERY"
+                           "SPARQL query is required"
+                           "Usage: xm --remote <URI> query sparql <QUERY>"
+                           global-opts)
+             (exit 2))
+
+           ;; Execute remote query via daemon
+           (let ((result (daemon-rpc "remote-query"
+                                     `(("uri" . ,remote-uri)
+                                       ("sparql" . ,sparql)))))
+             (if (assoc-ref result 'error)
+                 (begin
+                   (output-error "REMOTE_QUERY_ERROR"
+                                 (assoc-ref result 'error)
+                                 "Check that the remote URI is valid and accessible"
+                                 global-opts)
+                   1)
+                 (let ((data (assoc-ref result 'result)))
+                   (output-result data global-opts)
+                   0))))))
+
+    (else
+     (output-error "UNSUPPORTED_REMOTE_COMMAND"
+                   (format #f "Remote ~a queries not yet supported" subcommand)
+                   "Only 'sparql' queries are supported for --remote"
+                   global-opts)
+     2)))
+
+(define (read-all-stdin)
+  "Read all content from stdin."
+  (let loop ((lines '()))
+    (let ((line (read-line)))
+      (if (eof-object? line)
+          (string-join (reverse lines) "\n")
+          (loop (cons line lines))))))
+
+(define (string-join strs sep)
+  "Join strings with separator."
+  (if (null? strs)
+      ""
+      (let loop ((strs (cdr strs)) (acc (car strs)))
+        (if (null? strs)
+            acc
+            (loop (cdr strs) (string-append acc sep (car strs)))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Command Handlers (Placeholders for commands not yet implemented)

@@ -12,6 +12,7 @@
   #:use-module (ice-9 format)
   #:use-module (xm cli output)
   #:use-module (xm cli parser)
+  #:use-module (xm cli daemon)
   #:use-module (xm vocabulary)
   #:use-module (xm store)
   #:export (handle-subscribe-command
@@ -176,26 +177,70 @@
                       (format #t "  Using capability: ~a\\n" cap-id))
                     (format #t "  (no changes made)\\n"))))
 
-            ;; Actual sync - requires OCapN daemon
-            (let ((result `((ok . #f)
-                            (remote . ,remote-uri)
-                            (graph . ,(compact-uri graph-uri))
-                            (direction . ,direction)
-                            (local_triples . ,local-count)
-                            (error . "OCAPN_NOT_AVAILABLE")
-                            (message . "Full synchronization requires OCapN daemon. Use 'xm daemon start' first.")
-                            (suggestion . "For file-based sync, use 'xm export' and 'xm import'"))))
-              (if (assoc-ref global-opts "json")
-                  (output-result result global-opts)
-                  (begin
-                    (format #t "\\nSync status:\\n")
-                    (format #t "  Remote: ~a\\n" remote-uri)
-                    (format #t "  Graph: ~a\\n" (compact-uri graph-uri))
-                    (format #t "  Direction: ~a\\n" direction)
-                    (format #t "  Local triples: ~a\\n" local-count)
-                    (format #t "\\nNote: Full OCapN synchronization requires a running daemon.\\n")
-                    (format #t "Start the daemon with: xm daemon start\\n")
-                    (format #t "For file-based sync, use: xm export / xm import\\n")))))))))
+            ;; Actual sync - use OCapN daemon if available
+            (if (not (daemon-running?))
+                ;; Daemon not running - show helpful message
+                (let ((result `((ok . #f)
+                                (remote . ,remote-uri)
+                                (graph . ,(compact-uri graph-uri))
+                                (direction . ,direction)
+                                (local_triples . ,local-count)
+                                (error . "DAEMON_NOT_RUNNING")
+                                (message . "Full synchronization requires OCapN daemon.")
+                                (suggestion . "Start daemon with 'xm daemon start', or use 'xm export/import' for file-based sync"))))
+                  (if (assoc-ref global-opts "json")
+                      (output-result result global-opts)
+                      (begin
+                        (format #t "\nSync status:\n")
+                        (format #t "  Remote: ~a\n" remote-uri)
+                        (format #t "  Graph: ~a\n" (compact-uri graph-uri))
+                        (format #t "  Direction: ~a\n" direction)
+                        (format #t "  Local triples: ~a\n" local-count)
+                        (format #t "\nNote: Full OCapN synchronization requires a running daemon.\n")
+                        (format #t "Start the daemon with: xm daemon start\n")
+                        (format #t "For file-based sync, use: xm export / xm import\n"))))
+
+                ;; Daemon running - use OCapN sync
+                (begin
+                  ;; Step 1: Connect to remote
+                  (let ((connect-result (daemon-rpc "sync-connect"
+                                                    `(("uri" . ,remote-uri)
+                                                      ("graph" . ,(compact-uri graph-uri))))))
+                    (if (assoc-ref connect-result 'error)
+                        ;; Connection failed
+                        (begin
+                          (output-error "SYNC_CONNECT_ERROR"
+                                        (assoc-ref connect-result 'error)
+                                        "Check that the remote URI is valid"
+                                        global-opts)
+                          1)
+                        ;; Step 2: Execute sync
+                        (let ((sync-result (daemon-rpc "sync-execute"
+                                                       `(("graph" . ,(compact-uri graph-uri))
+                                                         ("direction" . ,direction)))))
+                          (if (assoc-ref sync-result 'error)
+                              (begin
+                                (output-error "SYNC_ERROR"
+                                              (assoc-ref sync-result 'error)
+                                              #f global-opts)
+                                1)
+                              (let ((data (assoc-ref sync-result 'result)))
+                                (if (assoc-ref global-opts "json")
+                                    (output-result `((ok . #t)
+                                                     (remote . ,remote-uri)
+                                                     (graph . ,(compact-uri graph-uri))
+                                                     (direction . ,direction)
+                                                     (local_triples . ,local-count)
+                                                     (sync . ,data))
+                                                   global-opts)
+                                    (begin
+                                      (format #t "\nSync completed:\n")
+                                      (format #t "  Remote: ~a\n" remote-uri)
+                                      (format #t "  Graph: ~a\n" (compact-uri graph-uri))
+                                      (format #t "  Direction: ~a\n" direction)
+                                      (format #t "  Local triples: ~a\n" local-count)
+                                      (format #t "  Status: ~a\n" (assoc-ref data 'status))))
+                                0))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions

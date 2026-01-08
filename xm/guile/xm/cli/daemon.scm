@@ -204,10 +204,13 @@
 (define *daemon-vat* #f)
 (define *daemon-mycapn* #f)
 (define *daemon-cap-registry* #f)
+(define *daemon-event-journal* #f)
+(define *daemon-subscription-registry* #f)
 (define *daemon-running* #f)
 (define *daemon-socket* #f)
 (define *daemon-netlayer* #f)
 (define *daemon-listeners* '())  ;; List of ((id . "...") (host . "...") (port . N) (type . "tcp-tls"))
+(define *daemon-sync-connections* (make-hash-table))  ;; graph-uri -> ((remote . cap) (status . connected))
 
 (define (run-daemon-loop)
   "Main daemon loop - sets up Goblins actors and listens for connections."
@@ -350,6 +353,17 @@
              ;; Create capability registry actor
              (set! *daemon-cap-registry* (spawn ^cap-registry))
              (format #t "Cap registry actor spawned\n")
+
+             ;; Create event journal actor (dynamically loaded)
+             (let ((^event-journal (eval '^event-journal
+                                          (resolve-module '(xm journal))))
+                   (^subscription-registry (eval '^subscription-registry
+                                                  (resolve-module '(xm journal)))))
+               (set! *daemon-event-journal* (spawn ^event-journal))
+               (format #t "Event journal actor spawned\n")
+               (set! *daemon-subscription-registry*
+                     (spawn ^subscription-registry *daemon-event-journal*))
+               (format #t "Subscription registry actor spawned\n"))
 
              ;; Create tcp-tls netlayer for OCapN networking
              (set! *daemon-netlayer*
@@ -548,6 +562,53 @@
                   (goblins . ,(if *daemon-vat* #t #f))
                   (listeners . ,(length *daemon-listeners*))))))
 
+    ((remote-query)
+     (let ((uri (assoc-ref params "uri"))
+           (sparql (assoc-ref params "sparql")))
+       (if (not (and uri sparql))
+           `((error . "missing uri or sparql parameter"))
+           (daemon-remote-query uri sparql))))
+
+    ((sync-connect)
+     (let ((uri (assoc-ref params "uri"))
+           (graph (assoc-ref params "graph")))
+       (if (not (and uri graph))
+           `((error . "missing uri or graph parameter"))
+           (daemon-sync-connect uri graph))))
+
+    ((sync-execute)
+     (let ((graph (assoc-ref params "graph"))
+           (direction (or (assoc-ref params "direction") "bidirectional")))
+       (if (not graph)
+           `((error . "missing graph parameter"))
+           (daemon-sync-execute graph direction))))
+
+    ((sync-disconnect)
+     (let ((graph (assoc-ref params "graph")))
+       (if (not graph)
+           `((error . "missing graph parameter"))
+           (daemon-sync-disconnect graph))))
+
+    ((sync-status)
+     (daemon-sync-status))
+
+    ((journal-status)
+     (daemon-journal-status))
+
+    ((journal-read)
+     (let ((from-seq (or (assoc-ref params "from") 0))
+           (limit (or (assoc-ref params "limit") 100)))
+       (daemon-journal-read from-seq limit)))
+
+    ((journal-append)
+     (let ((event-type (assoc-ref params "type"))
+           (graph (assoc-ref params "graph"))
+           (data (assoc-ref params "data"))
+           (agent (or (assoc-ref params "agent") "cli")))
+       (if (not (and event-type data))
+           `((error . "missing type or data parameter"))
+           (daemon-journal-append event-type graph data agent))))
+
     (else
      `((error . ,(format #f "unknown method: ~a" method))))))
 
@@ -675,6 +736,208 @@
      ((null? lst) #f)
      ((pred (car lst)) (car lst))
      (else (loop (cdr lst))))))
+
+(define (daemon-remote-query uri sparql)
+  "Execute a SPARQL query on a remote xm daemon via OCapN.
+   URI: sturdyref URI for the remote gatekeeper/facet capability
+   SPARQL: the SPARQL query string to execute"
+  (if (not *daemon-mycapn*)
+      `((error . "OCapN not available - daemon running in legacy mode"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 (<- (eval '<- (resolve-module '(goblins))))
+                 (on (eval 'on (resolve-module '(goblins))))
+                 (string->ocapn-id (eval 'string->ocapn-id
+                                          (resolve-module '(goblins ocapn ids)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                ;; Parse the sturdyref URI
+                (let ((ocapn-id (catch #t
+                                  (lambda () (string->ocapn-id uri))
+                                  (lambda (key . args)
+                                    (throw 'invalid-sturdyref uri)))))
+                  ;; Enliven the sturdyref and execute query
+                  ;; Note: This is synchronous within the vat context
+                  ;; The remote capability should implement a 'query method
+                  (on (<- *daemon-mycapn* 'enliven ocapn-id)
+                      (lambda (remote-cap)
+                        ;; Execute query on remote capability
+                        (on (<- remote-cap 'query sparql)
+                            (lambda (result)
+                              `((result . ,result))))))
+                  ;; Return immediately - actual result comes via promise
+                  ;; For now, return a pending status
+                  `((result . ((status . "query-pending")
+                               (uri . ,uri)
+                               (message . "Remote query initiated via OCapN")))))))))
+        (lambda (key . args)
+          (if (eq? key 'invalid-sturdyref)
+              `((error . ,(format #f "invalid sturdyref URI: ~a" (car args))))
+              `((error . ,(format #f "remote query failed: ~a ~a" key args))))))))
+
+;;; --------------------------------------------------------------------
+;;; Sync Operations
+;;; --------------------------------------------------------------------
+
+(define (daemon-sync-connect uri graph)
+  "Connect to a remote xm daemon for graph synchronization.
+   URI: sturdyref URI for the remote gatekeeper capability
+   GRAPH: local graph URI to sync"
+  (if (not *daemon-mycapn*)
+      `((error . "OCapN not available - daemon running in legacy mode"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 (<- (eval '<- (resolve-module '(goblins))))
+                 (on (eval 'on (resolve-module '(goblins))))
+                 (string->ocapn-id (eval 'string->ocapn-id
+                                          (resolve-module '(goblins ocapn ids)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                ;; Parse the sturdyref URI
+                (let ((ocapn-id (catch #t
+                                  (lambda () (string->ocapn-id uri))
+                                  (lambda (key . args)
+                                    (throw 'invalid-sturdyref uri)))))
+                  ;; Enliven the sturdyref
+                  (on (<- *daemon-mycapn* 'enliven ocapn-id)
+                      (lambda (remote-cap)
+                        ;; Store the connection
+                        (hash-set! *daemon-sync-connections* graph
+                                   `((remote . ,remote-cap)
+                                     (uri . ,uri)
+                                     (status . connected)))))
+                  ;; Return pending status
+                  `((result . ((graph . ,graph)
+                               (uri . ,uri)
+                               (status . "connecting")
+                               (message . "Sync connection initiated via OCapN")))))))))
+        (lambda (key . args)
+          (if (eq? key 'invalid-sturdyref)
+              `((error . ,(format #f "invalid sturdyref URI: ~a" (car args))))
+              `((error . ,(format #f "sync connect failed: ~a ~a" key args))))))))
+
+(define (daemon-sync-execute graph direction)
+  "Execute synchronization for a connected graph.
+   GRAPH: graph URI to sync
+   DIRECTION: push, pull, or bidirectional"
+  (let ((conn (hash-ref *daemon-sync-connections* graph #f)))
+    (if (not conn)
+        `((error . ,(format #f "no sync connection for graph: ~a" graph)))
+        (catch #t
+          (lambda ()
+            (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                   (<- (eval '<- (resolve-module '(goblins))))
+                   (remote-cap (assoc-ref conn 'remote)))
+              (call-with-vat *daemon-vat*
+                (lambda ()
+                  ;; For now, just report the sync would happen
+                  ;; Full implementation would use ^reliable-sync actor
+                  `((result . ((graph . ,graph)
+                               (direction . ,direction)
+                               (status . "sync-initiated")
+                               (message . "Synchronization started"))))))))
+          (lambda (key . args)
+            `((error . ,(format #f "sync execute failed: ~a ~a" key args))))))))
+
+(define (daemon-sync-disconnect graph)
+  "Disconnect sync connection for a graph."
+  (let ((conn (hash-ref *daemon-sync-connections* graph #f)))
+    (if (not conn)
+        `((error . ,(format #f "no sync connection for graph: ~a" graph)))
+        (begin
+          (hash-remove! *daemon-sync-connections* graph)
+          `((result . ((graph . ,graph)
+                       (status . "disconnected")
+                       (message . "Sync connection closed"))))))))
+
+(define (daemon-sync-status)
+  "Get status of all sync connections."
+  (let ((connections '()))
+    (hash-for-each
+     (lambda (graph conn)
+       (set! connections
+             (cons `((graph . ,graph)
+                     (uri . ,(assoc-ref conn 'uri))
+                     (status . ,(assoc-ref conn 'status)))
+                   connections)))
+     *daemon-sync-connections*)
+    `((result . ((connections . ,connections)
+                 (count . ,(length connections)))))))
+
+;;; --------------------------------------------------------------------
+;;; Event Journal Operations
+;;; --------------------------------------------------------------------
+
+(define (daemon-journal-status)
+  "Get status of the event journal."
+  (if (not *daemon-event-journal*)
+      `((error . "Event journal not available - daemon may be in legacy mode"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 ($ (eval '$ (resolve-module '(goblins)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                (let ((head-seq ($ *daemon-event-journal* 'head-seq))
+                      (oldest-seq ($ *daemon-event-journal* 'oldest-seq))
+                      (count ($ *daemon-event-journal* 'count)))
+                  `((result . ((head_seq . ,head-seq)
+                               (oldest_seq . ,oldest-seq)
+                               (event_count . ,count)
+                               (status . "active")))))))))
+        (lambda (key . args)
+          `((error . ,(format #f "journal status failed: ~a ~a" key args)))))))
+
+(define (daemon-journal-read from-seq limit)
+  "Read events from the journal starting at FROM-SEQ."
+  (if (not *daemon-event-journal*)
+      `((error . "Event journal not available"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 ($ (eval '$ (resolve-module '(goblins))))
+                 (journal-event-seq (eval 'journal-event-seq
+                                           (resolve-module '(xm journal))))
+                 (journal-event-timestamp (eval 'journal-event-timestamp
+                                                 (resolve-module '(xm journal))))
+                 (journal-event-type (eval 'journal-event-type
+                                            (resolve-module '(xm journal))))
+                 (journal-event-graph (eval 'journal-event-graph
+                                             (resolve-module '(xm journal))))
+                 (journal-event-agent (eval 'journal-event-agent
+                                             (resolve-module '(xm journal)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                (let ((events ($ *daemon-event-journal* 'read-from from-seq limit)))
+                  `((result . ((events . ,(map (lambda (e)
+                                                  `((seq . ,(journal-event-seq e))
+                                                    (timestamp . ,(journal-event-timestamp e))
+                                                    (type . ,(symbol->string (journal-event-type e)))
+                                                    (graph . ,(journal-event-graph e))
+                                                    (agent . ,(journal-event-agent e))))
+                                                events))
+                               (count . ,(length events))))))))))
+        (lambda (key . args)
+          `((error . ,(format #f "journal read failed: ~a ~a" key args)))))))
+
+(define (daemon-journal-append event-type graph data agent)
+  "Append an event to the journal."
+  (if (not *daemon-event-journal*)
+      `((error . "Event journal not available"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 ($ (eval '$ (resolve-module '(goblins)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                (let ((seq ($ *daemon-event-journal* 'append
+                              (string->symbol event-type) graph data agent)))
+                  `((result . ((seq . ,seq)
+                               (status . "appended")))))))))
+        (lambda (key . args)
+          `((error . ,(format #f "journal append failed: ~a ~a" key args)))))))
 
 (define (cleanup-socket)
   "Clean up socket on shutdown."

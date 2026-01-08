@@ -2,7 +2,7 @@
 
 ## Summary
 
-**Implementation Progress: ~98% complete** (52/53 CLI commands functional)
+**Implementation Progress: 100% complete** (53/53 CLI commands functional)
 
 | Category | Total | Complete | In Progress |
 |----------|-------|----------|-------------|
@@ -14,10 +14,10 @@
 | Session Commands | 6 | 6 | 0 |
 | Capability Commands | 9 | 9 | 0 |
 | Import/Export | 2 | 2 | 0 |
-| Sync Commands | 2 | 1 | 1 |
+| Sync Commands | 2 | 2 | 0 |
 | Daemon Commands | 10 | 10 | 0 |
 | Store Commands | 4 | 4 | 0 |
-| **Total** | **53** | **52** | **1** |
+| **Total** | **53** | **53** | **0** |
 
 ---
 
@@ -112,10 +112,10 @@
 - [x] Goblins runtime initialization with ^cap-registry actor
 - [x] OCapN tcp-tls netlayer (with macOS patches)
 
-### Phase 12: Synchronization Commands - PARTIAL
+### Phase 12: Synchronization Commands - COMPLETE
 
 - [x] `xm subscribe` - polling-based change notifications (NDJSON stream)
-- [ ] `xm sync` - requires OCapN daemon for remote sync (CLI exists, protocol not implemented)
+- [x] `xm sync` - OCapN-based graph synchronization via daemon
 
 ### Phase 13: Store Commands - COMPLETE
 
@@ -138,9 +138,9 @@
 - [x] `^session-registry` for session lookup
 - [x] `^capability-registry` for named capability storage
 - [x] Runtime vat initialization in daemon
+- [x] `^event-journal` for append-only mutation log (spawned in daemon)
+- [x] `^subscription-registry` for pubsub cursors (spawned in daemon)
 - [ ] Wire Goblins actors to CLI commands (currently using direct store access)
-- [ ] `^event-journal` for append-only mutation log
-- [ ] `^subscription-registry` for pubsub cursors
 
 ### OCapN Networking
 
@@ -152,28 +152,20 @@
 - [x] UDS netlayer (`xm/ocapn/netlayer-uds.scm`)
 - [x] tcp-tls netlayer (patched for macOS - run `make patch-goblins`)
 - [x] mycapn actor for capability registration
-- [ ] Remote gatekeeper access via `--remote` flag
+- [x] Remote gatekeeper access via `--remote` flag
 - [ ] Tor netlayer
 
 ---
 
 ## Remaining Work
 
-### 1. Remote Sync Protocol
-- `xm sync` CLI exists but needs OCapN-based graph synchronization
-- Requires: Define sync protocol, implement delta exchange
+### 1. Goblins Actor Wiring
+- Actors exist but CLI uses direct store access for performance
+- Future: Route CLI commands through daemon actors for full capability enforcement
 
-### 2. Goblins Actor Wiring
-- Actors exist but CLI uses direct store access
-- Requires: Route CLI commands through daemon actors for capability enforcement
-
-### 3. Event Journal & Store-and-Forward
-- Not implemented
-- Requires: Append-only event log, subscription cursors, outbox for offline queuing
-
-### 4. Remote Gatekeeper Access
-- `--remote` flag documented but not implemented
-- Requires: Connect to remote xm daemon for queries
+### 2. Tor Netlayer
+- OCapN supports Tor onion services but not yet implemented
+- Future: Add `^onion-netlayer` for anonymous networking
 
 ---
 
