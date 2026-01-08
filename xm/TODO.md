@@ -49,32 +49,32 @@ Per SPEC-029 Section 5.14:
 - [x] `xm schema predicates` - list predicates with usage stats
 - [x] `xm schema describe` - show schema info for a class/predicate
 
-### Phase 7: Graph Commands - NOT IMPLEMENTED
+### Phase 7: Graph Commands - COMPLETE
 
 Per SPEC-029 Section 5.15:
 
-- [ ] `xm graph list` - list named graphs with stats
-- [ ] `xm graph create` - create new named graph
-- [ ] `xm graph drop` - delete named graph
-- [ ] `xm graph stats` - detailed graph statistics
+- [x] `xm graph list` - list named graphs with stats
+- [x] `xm graph create` - create new named graph
+- [x] `xm graph drop` - delete named graph
+- [x] `xm graph stats` - detailed graph statistics
 
-### Phase 8: Import/Export Commands - NOT IMPLEMENTED
+### Phase 8: Import/Export Commands - COMPLETE
 
 Per SPEC-029 Section 5.18:
 
-- [ ] `xm import` - import from Turtle/N-Triples/JSON-LD files
-- [ ] `xm export` - export to RDF formats with graph selection
+- [x] `xm import` - import from Turtle/N-Triples/N-Quads files
+- [x] `xm export` - export to RDF formats with graph selection
 
-### Phase 9: Session Commands - STUB ONLY
+### Phase 9: Session Commands - COMPLETE
 
-Per SPEC-029 Section 5.16 (CLI structure exists but not functional):
+Per SPEC-029 Section 5.16:
 
-- [ ] Wire `session start` to actually create session nodes in store
-- [ ] Wire `session end` to record session summary and discoveries
-- [ ] Wire `session list` to query sessions from store
-- [ ] Wire `session resume` to reload session context
-- [ ] Wire `session history` to show session discoveries
-- [ ] Implement automatic session linking (discoveries -> session)
+- [x] `session start` - create session nodes in RDF store
+- [x] `session end` - record session end and summary
+- [x] `session list` - query sessions from store
+- [x] `session resume` - reload session context
+- [x] `session history` - show session discoveries and links
+- [ ] Automatic session linking (discoveries -> session) via `prov:wasGeneratedBy`
 
 ### Phase 10: Capability Commands - COMPLETE
 
@@ -105,21 +105,21 @@ Per SPEC-029 Section 5.20:
 - [ ] `daemon listen` - add OCapN listener
 - [ ] `daemon listeners` - list active listeners
 
-### Phase 12: Synchronization Commands - NOT IMPLEMENTED
+### Phase 12: Synchronization Commands - PARTIAL
 
 Per SPEC-029 Section 5.19:
 
-- [ ] `xm subscribe` - real-time change notifications (NDJSON stream)
-- [ ] `xm sync` - sync with remote xm daemon via OCapN
+- [x] `xm subscribe` - polling-based change notifications (NDJSON stream)
+- [~] `xm sync` - CLI implemented but requires OCapN daemon for remote sync
 
-### Phase 13: Store Commands - NOT IMPLEMENTED
+### Phase 13: Store Commands - COMPLETE
 
 Per SPEC-029 Section 5.21:
 
-- [ ] `xm store compact` - optimize storage
-- [ ] `xm store backup` - backup store to file
-- [ ] `xm store restore` - restore from backup
-- [ ] `xm store info` - storage statistics
+- [x] `xm store compact` - persist and optimize storage
+- [x] `xm store backup` - backup store to file (N-Quads/Turtle/N-Triples)
+- [x] `xm store restore` - restore from backup with merge option
+- [x] `xm store info` - storage statistics with top classes/predicates
 
 ---
 
@@ -130,9 +130,12 @@ Per SPEC-029 Section 5.21:
 - [x] Integrate Spritely Goblins 0.16.1 actor model (via Homebrew)
 - [x] `^cap-registry` actor for capability label->actor mapping
 - [x] Runtime vat initialization in daemon
-- [ ] `^graph-gatekeeper` actor for security enforcement
-- [ ] `^capability-store` actor with Bloblin persistence
-- [ ] `^session-actor` for session lifecycle
+- [x] `^graph-gatekeeper` actor for SPARQL query rewriting (gatekeeper.scm)
+- [x] `^graph-facet` capability wrapper with access control (capability.scm)
+- [x] `^session-actor` for session lifecycle (session.scm)
+- [x] `^session-registry` for session lookup (session.scm)
+- [x] `^capability-registry` for named capability storage (capability.scm)
+- [ ] Wire Goblins actors to CLI commands (currently using direct store access)
 - [ ] `^event-journal` for append-only mutation log
 - [ ] `^subscription-registry` for pubsub cursors
 
@@ -151,6 +154,7 @@ Per SPEC-029 Section 5.21:
       - Apply with: `make patch-goblins` (requires sudo)
       - Check status: `make check-patches`
       - TODO: Submit upstream patch to Goblins
+- [ ] **OCapN sturdyref enliven** - parsing and importing remote capabilities (daemon.scm:571)
 - [ ] Remote gatekeeper access via `--remote` flag
 - [ ] Tor netlayer
 
@@ -171,24 +175,50 @@ Per SPEC-029 Section 5.21:
 | Link Commands | 4 | 4 | 0 | 0 |
 | Query Commands | 5 | 5 | 0 | 0 |
 | Schema Commands | 3 | 3 | 0 | 0 |
-| Graph Commands | 4 | 0 | 0 | 4 |
-| Session Commands | 5 | 0 | 0 | 5 |
+| Graph Commands | 4 | 4 | 0 | 0 |
+| Session Commands | 6 | 5 | 0 | 1 |
 | Capability Commands | 9 | 9 | 0 | 0 |
-| Import/Export | 2 | 0 | 0 | 2 |
-| Sync Commands | 2 | 0 | 0 | 2 |
+| Import/Export | 2 | 2 | 0 | 0 |
+| Sync Commands | 2 | 1 | 1 | 0 |
 | Daemon Commands | 10 | 8 | 2 | 0 |
-| Store Commands | 4 | 0 | 0 | 4 |
-| **Total** | **52** | **33** | **2** | **17** |
+| Store Commands | 4 | 4 | 0 | 0 |
+| **Total** | **53** | **49** | **3** | **1** |
 
-**Implementation Progress: ~63% complete** (functional commands)
+**Implementation Progress: ~92% complete** (functional CLI commands)
+
+---
+
+## Remaining Stubbed Features
+
+The following features have stub implementations or are not fully wired:
+
+1. **OCapN Sturdyref Enliven** (daemon.scm:571)
+   - `daemon-cap-import` returns "import-pending" status
+   - Needs: Parse sturdyref URI and enliven via mycapn actor
+
+2. **Automatic Session Linking**
+   - Session commands work but don't auto-link discoveries
+   - Needs: Hook into node/link create to add `prov:wasGeneratedBy` triples
+
+3. **Goblins Actor Wiring**
+   - Actors exist (`^graph-gatekeeper`, `^session-actor`, etc.)
+   - CLI commands use direct store access instead of actor method calls
+   - Needs: Spawn actors in daemon, route CLI commands through actors
+
+4. **Remote Sync**
+   - `xm sync` CLI exists but requires OCapN daemon
+   - Needs: Implement actual OCapN-based graph synchronization
+
+5. **Daemon Listeners**
+   - `daemon listen` / `daemon listeners` not implemented
+   - Needs: OCapN listener management commands
 
 ---
 
 ## Recommended Next Steps
 
 1. ~~**Fix OCapN netlayer on macOS**~~ - RESOLVED: fibers 1.4.0 from Homebrew tap works
-2. **Graph commands** - useful for managing named graphs
-3. **Wire session stubs** - make session tracking functional
-4. **Import/export** - essential for data portability
-5. **Store commands** - backup/restore functionality
-6. **Remote gatekeeper access** - implement `--remote` flag for cross-daemon queries
+2. **OCapN sturdyref enliven** - complete remote capability import
+3. **Wire Goblins actors** - route CLI through daemon actors for proper capability enforcement
+4. **Remote gatekeeper access** - implement `--remote` flag for cross-daemon queries
+5. **Event journal** - enable reliable pub/sub and offline sync
