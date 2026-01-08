@@ -206,6 +206,8 @@
 (define *daemon-cap-registry* #f)
 (define *daemon-event-journal* #f)
 (define *daemon-subscription-registry* #f)
+(define *daemon-gatekeeper* #f)
+(define *daemon-store* #f)
 (define *daemon-running* #f)
 (define *daemon-socket* #f)
 (define *daemon-netlayer* #f)
@@ -364,6 +366,17 @@
                (set! *daemon-subscription-registry*
                      (spawn ^subscription-registry *daemon-event-journal*))
                (format #t "Subscription registry actor spawned\n"))
+
+             ;; Create gatekeeper actor for capability-enforced queries
+             (let ((^graph-gatekeeper (eval '^graph-gatekeeper
+                                             (resolve-module '(xm gatekeeper))))
+                   (make-store (eval 'make-store (resolve-module '(xm store))))
+                   (store-path (or (getenv "XM_STORE")
+                                   (string-append (getenv "HOME") "/.local/share/xm"))))
+               (set! *daemon-store* (make-store store-path))
+               (format #t "Store opened at ~a\n" store-path)
+               (set! *daemon-gatekeeper* (spawn ^graph-gatekeeper *daemon-store*))
+               (format #t "Graph gatekeeper actor spawned\n"))
 
              ;; Create tcp-tls netlayer for OCapN networking
              (set! *daemon-netlayer*
@@ -608,6 +621,32 @@
        (if (not (and event-type data))
            `((error . "missing type or data parameter"))
            (daemon-journal-append event-type graph data agent))))
+
+    ;; Core CLI operations via actors
+    ((query)
+     (let ((sparql (assoc-ref params "sparql"))
+           (cap-label (assoc-ref params "cap")))
+       (if (not sparql)
+           `((error . "missing sparql parameter"))
+           (daemon-actor-query sparql cap-label))))
+
+    ((insert)
+     (let ((graph (assoc-ref params "graph"))
+           (triples (assoc-ref params "triples"))
+           (cap-label (assoc-ref params "cap"))
+           (agent (or (assoc-ref params "agent") "cli")))
+       (if (not (and graph triples))
+           `((error . "missing graph or triples parameter"))
+           (daemon-actor-insert graph triples cap-label agent))))
+
+    ((delete)
+     (let ((graph (assoc-ref params "graph"))
+           (pattern (assoc-ref params "pattern"))
+           (cap-label (assoc-ref params "cap"))
+           (agent (or (assoc-ref params "agent") "cli")))
+       (if (not (and graph pattern))
+           `((error . "missing graph or pattern parameter"))
+           (daemon-actor-delete graph pattern cap-label agent))))
 
     (else
      `((error . ,(format #f "unknown method: ~a" method))))))
@@ -938,6 +977,68 @@
                                (status . "appended")))))))))
         (lambda (key . args)
           `((error . ,(format #f "journal append failed: ~a ~a" key args)))))))
+
+;;; --------------------------------------------------------------------
+;;; Actor-based CLI Operations
+;;; --------------------------------------------------------------------
+
+(define (daemon-actor-query sparql cap-label)
+  "Execute a SPARQL query via the gatekeeper actor."
+  (if (not *daemon-gatekeeper*)
+      `((error . "Gatekeeper not available - daemon may be in legacy mode"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 ($ (eval '$ (resolve-module '(goblins)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                ;; Use public-query if no capability, or query with cap
+                (let ((result (if cap-label
+                                  ($ *daemon-gatekeeper* 'query cap-label sparql)
+                                  ($ *daemon-gatekeeper* 'public-query sparql))))
+                  `((result . ,result)))))))
+        (lambda (key . args)
+          `((error . ,(format #f "query failed: ~a ~a" key args)))))))
+
+(define (daemon-actor-insert graph triples cap-label agent)
+  "Insert triples via the gatekeeper actor with journal logging."
+  (if (not *daemon-gatekeeper*)
+      `((error . "Gatekeeper not available"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 ($ (eval '$ (resolve-module '(goblins)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                ;; Insert via gatekeeper
+                (let ((result ($ *daemon-gatekeeper* 'insert cap-label graph triples)))
+                  ;; Log to journal
+                  (when *daemon-event-journal*
+                    ($ *daemon-event-journal* 'append 'insert graph triples agent))
+                  `((result . ((status . "inserted")
+                               (graph . ,graph)))))))))
+        (lambda (key . args)
+          `((error . ,(format #f "insert failed: ~a ~a" key args)))))))
+
+(define (daemon-actor-delete graph pattern cap-label agent)
+  "Delete triples via the gatekeeper actor with journal logging."
+  (if (not *daemon-gatekeeper*)
+      `((error . "Gatekeeper not available"))
+      (catch #t
+        (lambda ()
+          (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                 ($ (eval '$ (resolve-module '(goblins)))))
+            (call-with-vat *daemon-vat*
+              (lambda ()
+                ;; Delete via gatekeeper
+                (let ((result ($ *daemon-gatekeeper* 'delete cap-label graph pattern)))
+                  ;; Log to journal
+                  (when *daemon-event-journal*
+                    ($ *daemon-event-journal* 'append 'delete graph pattern agent))
+                  `((result . ((status . "deleted")
+                               (graph . ,graph)))))))))
+        (lambda (key . args)
+          `((error . ,(format #f "delete failed: ~a ~a" key args)))))))
 
 (define (cleanup-socket)
   "Clean up socket on shutdown."

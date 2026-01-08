@@ -12,6 +12,7 @@
   #:use-module (ice-9 regex)
   #:use-module (xm cli output)
   #:use-module (xm cli parser)
+  #:use-module (xm cli daemon)
   #:use-module (xm vocabulary)
   #:use-module (xm store)
   #:export (handle-query-command
@@ -51,7 +52,8 @@
    --cap LABEL: Use capability for access control (required for protected graphs)
    --timeout DURATION: Query timeout
    -o, --output FORMAT: Output format for CONSTRUCT
-   --allow-from: Allow FROM clauses in query (bypasses graph restriction)"
+   --allow-from: Allow FROM clauses in query (bypasses graph restriction)
+   --via-daemon: Route query through daemon actor (for capability enforcement)"
 
   (let* ((positional (assoc-ref opts 'positional))
          (sparql (cond
@@ -66,7 +68,8 @@
                             (assoc-ref opts "o")
                             "json"))
          (allow-from (assoc-ref opts "allow-from"))
-         (cap-label (assoc-ref opts "cap")))
+         (cap-label (assoc-ref opts "cap"))
+         (via-daemon (assoc-ref opts "via-daemon")))
 
     (unless sparql
       (output-error "MISSING_QUERY"
@@ -75,11 +78,33 @@
                     global-opts)
       (exit 2))
 
-    ;; If --cap is provided, use capability-enforced access
-    (if cap-label
-        (execute-with-capability store sparql cap-label global-opts)
-        ;; Otherwise, use default public graph access
-        (execute-without-capability store sparql allow-from global-opts))))
+    ;; Check if we should use daemon for actor-based execution
+    (if (and (or via-daemon cap-label) (daemon-running?))
+        ;; Use daemon actor for capability-enforced query
+        (execute-via-daemon sparql cap-label global-opts)
+        ;; Local execution
+        (if cap-label
+            (execute-with-capability store sparql cap-label global-opts)
+            ;; Otherwise, use default public graph access
+            (execute-without-capability store sparql allow-from global-opts)))))
+
+(define (execute-via-daemon sparql cap-label global-opts)
+  "Execute query via daemon gatekeeper actor."
+  (let ((result (daemon-rpc "query"
+                            `(("sparql" . ,sparql)
+                              ,@(if cap-label
+                                    `(("cap" . ,cap-label))
+                                    '())))))
+    (if (assoc-ref result 'error)
+        (begin
+          (output-error "DAEMON_QUERY_ERROR"
+                        (assoc-ref result 'error)
+                        "Query execution via daemon failed"
+                        global-opts)
+          1)
+        (let ((data (assoc-ref result 'result)))
+          (output-result data global-opts)
+          0))))
 
 (define (execute-with-capability store sparql cap-label global-opts)
   "Execute query using capability for access control."

@@ -128,7 +128,7 @@
 
 ## Architecture Components
 
-### Goblins Integration
+### Goblins Integration - COMPLETE
 
 - [x] Spritely Goblins 0.16.1 actor model (via Homebrew)
 - [x] `^cap-registry` actor for capability label->actor mapping
@@ -140,7 +140,7 @@
 - [x] Runtime vat initialization in daemon
 - [x] `^event-journal` for append-only mutation log (spawned in daemon)
 - [x] `^subscription-registry` for pubsub cursors (spawned in daemon)
-- [ ] Wire Goblins actors to CLI commands (currently using direct store access)
+- [x] CLI-to-actor wiring via daemon RPC (query, insert, delete)
 
 ### OCapN Networking
 
@@ -159,11 +159,7 @@
 
 ## Remaining Work
 
-### 1. Goblins Actor Wiring
-- Actors exist but CLI uses direct store access for performance
-- Future: Route CLI commands through daemon actors for full capability enforcement
-
-### 2. Tor Netlayer
+### 1. Tor Netlayer
 - OCapN supports Tor onion services but not yet implemented
 - Future: Add `^onion-netlayer` for anonymous networking
 
