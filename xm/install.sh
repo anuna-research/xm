@@ -11,6 +11,7 @@ set -e
 #   VERSION       - Version to install (default: latest)
 #   INSTALL_DIR   - Binary install directory (default: ~/.local/bin)
 #   SKIP_PREREQ   - Set to 1 to skip prerequisite checks
+#   AUTO_INSTALL  - Set to 1 to automatically install missing dependencies
 
 TOOL_NAME="xm"
 VERSION="${VERSION:-latest}"
@@ -30,6 +31,107 @@ info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 step() { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+# Prompt user for yes/no confirmation
+# Returns true automatically if AUTO_INSTALL=1
+confirm() {
+  local prompt="$1"
+  if [[ "${AUTO_INSTALL:-0}" == "1" ]]; then
+    info "$prompt -> Yes (AUTO_INSTALL=1)"
+    return 0
+  fi
+  local response
+  echo -en "${YELLOW}$prompt [y/N]${NC} "
+  read -r response
+  [[ "$response" =~ ^[Yy]$ ]]
+}
+
+# Detect available package manager
+detect_package_manager() {
+  if command -v apt >/dev/null 2>&1; then
+    PKG_MANAGER="apt"
+  elif command -v dnf >/dev/null 2>&1; then
+    PKG_MANAGER="dnf"
+  elif command -v pacman >/dev/null 2>&1; then
+    PKG_MANAGER="pacman"
+  elif command -v brew >/dev/null 2>&1; then
+    PKG_MANAGER="brew"
+  elif command -v guix >/dev/null 2>&1; then
+    PKG_MANAGER="guix"
+  else
+    PKG_MANAGER=""
+  fi
+}
+
+# Install Guile using detected package manager
+install_guile() {
+  detect_package_manager
+
+  if [[ -z "$PKG_MANAGER" ]]; then
+    error "No supported package manager found. Please install Guile 3.0+ manually."
+  fi
+
+  info "Will install Guile using $PKG_MANAGER"
+
+  case "$PKG_MANAGER" in
+    apt)
+      sudo apt update && sudo apt install -y guile-3.0
+      ;;
+    dnf)
+      sudo dnf install -y guile30
+      ;;
+    pacman)
+      sudo pacman -S --noconfirm guile
+      ;;
+    brew)
+      brew install guile
+      ;;
+    guix)
+      guix install guile
+      ;;
+  esac
+
+  if ! command -v guile >/dev/null 2>&1; then
+    error "Guile installation failed"
+  fi
+  info "Guile installed successfully"
+}
+
+# Install Goblins using detected package manager
+install_goblins() {
+  detect_package_manager
+
+  case "$PKG_MANAGER" in
+    guix)
+      info "Installing Goblins via Guix..."
+      guix install guile-goblins
+      ;;
+    *)
+      # For non-Guix systems, try to use Guix if available, otherwise guide manual install
+      if command -v guix >/dev/null 2>&1; then
+        info "Installing Goblins via Guix..."
+        guix install guile-goblins
+      else
+        warn "Goblins is best installed via Guix package manager."
+        echo ""
+        echo "To install Guix (works alongside other package managers):"
+        echo "  curl -fsSL https://git.savannah.gnu.org/cgit/guix.git/plain/etc/guix-install.sh | sudo bash"
+        echo ""
+        echo "Then install Goblins:"
+        echo "  guix install guile-goblins"
+        echo ""
+        return 1
+      fi
+      ;;
+  esac
+
+  if guile -c "(use-modules (goblins))" 2>/dev/null; then
+    info "Goblins installed successfully"
+  else
+    warn "Goblins installation may require environment setup"
+    return 1
+  fi
+}
 
 detect_platform() {
   local detected_os detected_arch
@@ -85,9 +187,18 @@ check_prerequisites() {
 
   # Check for Guile
   if ! command -v guile >/dev/null 2>&1; then
-    error "Guile 3.0+ is required but not found.
+    warn "Guile 3.0+ is required but not found."
+    detect_package_manager
+    if [[ -n "$PKG_MANAGER" ]]; then
+      if confirm "Would you like to install Guile using $PKG_MANAGER?"; then
+        install_guile
+      else
+        error "Guile is required. Please install it manually and re-run the installer."
+      fi
+    else
+      error "Guile 3.0+ is required but not found, and no supported package manager detected.
 
-Install Guile:
+Install Guile manually:
   # Debian/Ubuntu
   sudo apt install guile-3.0
 
@@ -102,6 +213,7 @@ Install Guile:
 
   # Guix
   guix install guile"
+    fi
   fi
 
   # Check Guile version
@@ -112,13 +224,18 @@ Install Guile:
   fi
   info "Found Guile $GUILE_VERSION"
 
-  # Check for Goblins (optional)
+  # Check for Goblins
   if guile -c "(use-modules (goblins))" 2>/dev/null; then
     info "Found Goblins"
   else
-    warn "Goblins not found (optional, needed for OCapN networking)"
-    echo "  Install with Guix: guix install guile-goblins"
-    echo ""
+    warn "Goblins not found (needed for OCapN networking features)"
+    if confirm "Would you like to install Goblins?"; then
+      if ! install_goblins; then
+        warn "Continuing without Goblins - some features will be unavailable"
+      fi
+    else
+      info "Skipping Goblins installation - some features will be unavailable"
+    fi
   fi
 }
 
@@ -289,9 +406,10 @@ print_usage() {
   echo "  curl -fsSL https://files.anuna.io/xm/latest/install.sh | bash"
   echo ""
   echo "Environment variables:"
-  echo "  VERSION     - Version to install (default: latest)"
-  echo "  INSTALL_DIR - Install directory (default: ~/.local/bin)"
-  echo "  SKIP_PREREQ - Set to 1 to skip prerequisite checks"
+  echo "  VERSION      - Version to install (default: latest)"
+  echo "  INSTALL_DIR  - Install directory (default: ~/.local/bin)"
+  echo "  SKIP_PREREQ  - Set to 1 to skip prerequisite checks"
+  echo "  AUTO_INSTALL - Set to 1 to auto-install missing dependencies"
   echo ""
   echo "Examples:"
   echo "  # Install latest version"
@@ -302,6 +420,9 @@ print_usage() {
   echo ""
   echo "  # Install to custom directory"
   echo "  INSTALL_DIR=/usr/local/bin curl -fsSL ... | bash"
+  echo ""
+  echo "  # Auto-install all dependencies (non-interactive)"
+  echo "  AUTO_INSTALL=1 curl -fsSL https://files.anuna.io/xm/latest/install.sh | bash"
   echo ""
 }
 
