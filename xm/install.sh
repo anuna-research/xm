@@ -47,7 +47,7 @@ detect_platform() {
 
   case "$detected_os" in
     linux*)  OS="linux" ;;
-    darwin*) OS="macos" ;;
+    darwin*) OS="darwin" ;;
     msys*|mingw*|cygwin*) error "Windows is not supported. Use WSL instead." ;;
     *)       error "Unsupported OS: $detected_os" ;;
   esac
