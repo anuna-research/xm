@@ -286,9 +286,16 @@ Subcommands:
   stop       Stop the daemon
   restart    Restart the daemon
   status     Show daemon status
+  listen     Add an OCapN listener
+  listeners  List active OCapN listeners
 
 Options (start):
   --foreground, -F    Run in foreground (don't background)
+
+Options (listen):
+  --port, -p PORT     Port number to listen on (required)
+  --host, -H HOST     Host/interface to bind to (default: localhost)
+  --type TYPE         Listener type: tcp-tls (default: tcp-tls)
 
 Examples:
   xm daemon start
@@ -296,6 +303,8 @@ Examples:
   xm daemon status
   xm daemon stop
   xm daemon restart
+  xm daemon listeners
+  xm daemon listen --port 9999
 ")
     (keys . "
 xm keys - Manage agent identity keys
@@ -548,10 +557,83 @@ Examples:
                            (assoc-ref result 'pid))
                    (format #t "Daemon is not running\n")))
            0))
+        ((listeners)
+         ;; List active OCapN listeners
+         (if (not (daemon-running?))
+             (begin
+               (output-error "DAEMON_NOT_RUNNING"
+                             "Daemon is not running"
+                             "Start daemon with: xm daemon start"
+                             global-opts)
+               1)
+             (let ((result (daemon-rpc "listeners" '())))
+               (if (assoc-ref result 'error)
+                   (begin
+                     (output-error "LISTENERS_ERROR"
+                                   (assoc-ref result 'error)
+                                   #f global-opts)
+                     1)
+                   (let ((data (assoc-ref result 'result)))
+                     (if (assoc-ref global-opts "json")
+                         (output-result `((ok . #t) (data . ,data)) global-opts)
+                         (let ((listeners (assoc-ref data 'listeners)))
+                           (format #t "\nOCapN Listeners:\n\n")
+                           (if (null? listeners)
+                               (format #t "  (no listeners active)\n")
+                               (for-each
+                                (lambda (l)
+                                  (format #t "  ~a: ~a:~a (~a) [~a]\n"
+                                          (assoc-ref l 'id)
+                                          (assoc-ref l 'host)
+                                          (assoc-ref l 'port)
+                                          (assoc-ref l 'type)
+                                          (assoc-ref l 'status)))
+                                listeners))
+                           (format #t "\nTotal: ~a listener(s)\n" (length listeners))))
+                     0)))))
+        ((listen)
+         ;; Add a new OCapN listener
+         (if (not (daemon-running?))
+             (begin
+               (output-error "DAEMON_NOT_RUNNING"
+                             "Daemon is not running"
+                             "Start daemon with: xm daemon start"
+                             global-opts)
+               1)
+             (let* ((port-opt (or (assoc-ref opts "port")
+                                  (assoc-ref opts "p")))
+                    (host-opt (or (assoc-ref opts "host")
+                                  (assoc-ref opts "H")
+                                  "localhost"))
+                    (type-opt (or (assoc-ref opts "type") "tcp-tls")))
+               (if (not port-opt)
+                   (begin
+                     (output-error "MISSING_PORT"
+                                   "Port is required"
+                                   "Usage: xm daemon listen --port PORT [--host HOST]"
+                                   global-opts)
+                     2)
+                   (let* ((port (string->number port-opt))
+                          (result (daemon-rpc "listen"
+                                              `(("host" . ,host-opt)
+                                                ("port" . ,port)
+                                                ("type" . ,type-opt)))))
+                     (if (assoc-ref result 'error)
+                         (begin
+                           (output-error "LISTEN_ERROR"
+                                         (assoc-ref result 'error)
+                                         #f global-opts)
+                           1)
+                         (let ((data (assoc-ref result 'result)))
+                           (if (assoc-ref global-opts "json")
+                               (output-result `((ok . #t) (data . ,data)) global-opts)
+                               (format #t "Listener added: ~a:~a (~a)\n"
+                                       host-opt port type-opt))
+                           0)))))))
         (else
          (output-error "UNKNOWN_SUBCOMMAND"
                        (format #f "Unknown daemon subcommand: ~a" subcommand)
-                       "Available: start, stop, restart, status"
+                       "Available: start, stop, restart, status, listen, listeners"
                        global-opts)
          2)))
     (lambda (key . args)

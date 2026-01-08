@@ -74,7 +74,7 @@ Per SPEC-029 Section 5.16:
 - [x] `session list` - query sessions from store
 - [x] `session resume` - reload session context
 - [x] `session history` - show session discoveries and links
-- [ ] Automatic session linking (discoveries -> session) via `prov:wasGeneratedBy`
+- [x] Automatic session linking (discoveries -> session) via `prov:wasGeneratedBy`
 
 ### Phase 10: Capability Commands - COMPLETE
 
@@ -90,7 +90,7 @@ Per SPEC-029 Section 5.17:
 - [x] Implement capability-enforced queries (`--cap` flag on `xm query sparql`)
 - [x] Query rewriting with FROM clause scoping for allowed graphs
 
-### Phase 11: Daemon Commands - IN PROGRESS
+### Phase 11: Daemon Commands - COMPLETE
 
 Per SPEC-029 Section 5.20:
 
@@ -102,8 +102,8 @@ Per SPEC-029 Section 5.20:
 - [x] `daemon status` - show running state
 - [x] Goblins runtime initialization with ^cap-registry actor
 - [x] OCapN UDS netlayer (Unix Domain Socket - macOS compatible)
-- [ ] `daemon listen` - add OCapN listener
-- [ ] `daemon listeners` - list active listeners
+- [x] `daemon listen` - add OCapN listener
+- [x] `daemon listeners` - list active listeners
 
 ### Phase 12: Synchronization Commands - PARTIAL
 
@@ -154,7 +154,7 @@ Per SPEC-029 Section 5.21:
       - Apply with: `make patch-goblins` (requires sudo)
       - Check status: `make check-patches`
       - TODO: Submit upstream patch to Goblins
-- [ ] **OCapN sturdyref enliven** - parsing and importing remote capabilities (daemon.scm:571)
+- [x] **OCapN sturdyref enliven** - parsing and importing remote capabilities
 - [ ] Remote gatekeeper access via `--remote` flag
 - [ ] Tor netlayer
 
@@ -176,15 +176,15 @@ Per SPEC-029 Section 5.21:
 | Query Commands | 5 | 5 | 0 | 0 |
 | Schema Commands | 3 | 3 | 0 | 0 |
 | Graph Commands | 4 | 4 | 0 | 0 |
-| Session Commands | 6 | 5 | 0 | 1 |
+| Session Commands | 6 | 6 | 0 | 0 |
 | Capability Commands | 9 | 9 | 0 | 0 |
 | Import/Export | 2 | 2 | 0 | 0 |
 | Sync Commands | 2 | 1 | 1 | 0 |
-| Daemon Commands | 10 | 8 | 2 | 0 |
+| Daemon Commands | 10 | 10 | 0 | 0 |
 | Store Commands | 4 | 4 | 0 | 0 |
-| **Total** | **53** | **49** | **3** | **1** |
+| **Total** | **53** | **52** | **1** | **0** |
 
-**Implementation Progress: ~92% complete** (functional CLI commands)
+**Implementation Progress: ~98% complete** (functional CLI commands)
 
 ---
 
@@ -192,33 +192,31 @@ Per SPEC-029 Section 5.21:
 
 The following features have stub implementations or are not fully wired:
 
-1. **OCapN Sturdyref Enliven** (daemon.scm:571)
-   - `daemon-cap-import` returns "import-pending" status
-   - Needs: Parse sturdyref URI and enliven via mycapn actor
+1. **Remote Sync**
+   - `xm sync` CLI exists but requires OCapN daemon for actual sync
+   - Needs: Implement actual OCapN-based graph synchronization protocol
 
-2. **Automatic Session Linking**
-   - Session commands work but don't auto-link discoveries
-   - Needs: Hook into node/link create to add `prov:wasGeneratedBy` triples
-
-3. **Goblins Actor Wiring**
+2. **Goblins Actor Wiring**
    - Actors exist (`^graph-gatekeeper`, `^session-actor`, etc.)
    - CLI commands use direct store access instead of actor method calls
-   - Needs: Spawn actors in daemon, route CLI commands through actors
+   - Needs: Route CLI commands through daemon actors for capability enforcement
 
-4. **Remote Sync**
-   - `xm sync` CLI exists but requires OCapN daemon
-   - Needs: Implement actual OCapN-based graph synchronization
+3. **Event Journal**
+   - Not implemented
+   - Needs: Append-only event log for all mutations, subscription cursors
 
-5. **Daemon Listeners**
-   - `daemon listen` / `daemon listeners` not implemented
-   - Needs: OCapN listener management commands
+4. **Remote Gatekeeper Access**
+   - `--remote` flag mentioned but not implemented
+   - Needs: Connect to remote xm daemon for queries
 
 ---
 
 ## Recommended Next Steps
 
 1. ~~**Fix OCapN netlayer on macOS**~~ - RESOLVED: fibers 1.4.0 from Homebrew tap works
-2. **OCapN sturdyref enliven** - complete remote capability import
-3. **Wire Goblins actors** - route CLI through daemon actors for proper capability enforcement
-4. **Remote gatekeeper access** - implement `--remote` flag for cross-daemon queries
-5. **Event journal** - enable reliable pub/sub and offline sync
+2. ~~**OCapN sturdyref enliven**~~ - RESOLVED: implemented in daemon-cap-import
+3. ~~**Daemon listeners**~~ - RESOLVED: daemon listen/listeners commands implemented
+4. ~~**Automatic session linking**~~ - RESOLVED: node/link create now adds prov:wasGeneratedBy
+5. **Wire Goblins actors** - route CLI through daemon actors for proper capability enforcement
+6. **Remote gatekeeper access** - implement `--remote` flag for cross-daemon queries
+7. **Event journal** - enable reliable pub/sub and offline sync

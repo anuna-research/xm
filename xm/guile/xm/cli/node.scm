@@ -21,6 +21,9 @@
             cmd-node-update
             cmd-node-delete))
 
+;;; Re-export prov:wasGeneratedBy for session linking
+(define prov:wasGeneratedBy (@ (xm vocabulary) prov:wasGeneratedBy))
+
 ;;; --------------------------------------------------------------------
 ;;; Node Command Dispatcher
 ;;; --------------------------------------------------------------------
@@ -121,11 +124,18 @@
                (store-insert-quad store node-id pred-uri target-uri #:graph graph-uri)))
            links)
 
+          ;; Link to session if --session was provided (automatic session linking)
+          (let ((session-id (assoc-ref global-opts "session")))
+            (when session-id
+              (let ((session-uri (expand-uri session-id)))
+                (store-insert-quad store node-id prov:wasGeneratedBy session-uri #:graph graph-uri))))
+
           (let ((result `((id . ,node-id)
                           (type . ,node-type)
                           (created_at . ,timestamp)
                           (properties . ,properties)
-                          (links_created . ,(length links)))))
+                          (links_created . ,(length links))
+                          (session . ,(assoc-ref global-opts "session")))))
             (output-result result global-opts))))))
 
 ;;; --------------------------------------------------------------------

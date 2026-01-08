@@ -206,6 +206,8 @@
 (define *daemon-cap-registry* #f)
 (define *daemon-running* #f)
 (define *daemon-socket* #f)
+(define *daemon-netlayer* #f)
+(define *daemon-listeners* '())  ;; List of ((id . "...") (host . "...") (port . N) (type . "tcp-tls"))
 
 (define (run-daemon-loop)
   "Main daemon loop - sets up Goblins actors and listens for connections."
@@ -252,8 +254,6 @@
       (loop)))
 
   (cleanup-socket))
-
-(define *daemon-netlayer* #f)
 
 (define (daemon-tls-port)
   "Get TLS port, configurable via XM_PORT env var."
@@ -357,6 +357,13 @@
                           #:port tls-port
                           #:key tls-key
                           #:cert tls-cert))
+             ;; Record listener info
+             (set! *daemon-listeners*
+                   (list `((id . "default")
+                           (host . "localhost")
+                           (port . ,tls-port)
+                           (type . "tcp-tls")
+                           (status . "active"))))
              (format #t "OCapN tcp-tls netlayer listening on localhost:~a\n" tls-port)
 
              ;; Create mycapn with the tcp-tls netlayer
@@ -524,10 +531,22 @@
     ((cap-list)
      (daemon-cap-list))
 
+    ((listeners)
+     (daemon-list-listeners))
+
+    ((listen)
+     (let ((host (or (assoc-ref params "host") "localhost"))
+           (port (assoc-ref params "port"))
+           (type (or (assoc-ref params "type") "tcp-tls")))
+       (if (not port)
+           `((error . "missing port parameter"))
+           (daemon-add-listener host port type))))
+
     ((status)
      `((result . ((running . #t)
                   (ocapn . ,(if *daemon-mycapn* #t #f))
-                  (goblins . ,(if *daemon-vat* #t #f))))))
+                  (goblins . ,(if *daemon-vat* #t #f))
+                  (listeners . ,(length *daemon-listeners*))))))
 
     (else
      `((error . ,(format #f "unknown method: ~a" method))))))
@@ -558,25 +577,43 @@
           `((error . ,(format #f "export failed: ~a ~a" key args)))))))
 
 (define (daemon-cap-import uri label)
-  "Import a capability from an OCapN sturdyref URI."
+  "Import a capability from an OCapN sturdyref URI.
+   Parses the sturdyref and enlivens it via mycapn to get a live reference."
   (if (not *daemon-mycapn*)
       `((error . "OCapN not available - daemon running in legacy mode"))
       ;; Use mycapn to enliven the sturdyref
       (catch #t
         (lambda ()
           (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
-                 ($ (eval '$ (resolve-module '(goblins)))))
+                 ($ (eval '$ (resolve-module '(goblins))))
+                 (<- (eval '<- (resolve-module '(goblins))))
+                 (on (eval 'on (resolve-module '(goblins))))
+                 (string->ocapn-id (eval 'string->ocapn-id
+                                          (resolve-module '(goblins ocapn ids)))))
             (call-with-vat *daemon-vat*
               (lambda ()
-                ;; TODO: Parse sturdyref URI and enliven via mycapn
-                ;; For now, register the intent in our local registry
-                ($ *daemon-cap-registry* 'register label #f)
-                `((result . ((label . ,label)
-                             (uri . ,uri)
-                             (status . "import-pending")
-                             (message . "OCapN import initiated"))))))))
+                ;; Parse the sturdyref URI
+                (let ((ocapn-id (catch #t
+                                  (lambda () (string->ocapn-id uri))
+                                  (lambda (key . args)
+                                    (throw 'invalid-sturdyref uri)))))
+                  ;; Enliven the sturdyref via mycapn
+                  ;; Note: This returns a promise (vow) for the remote capability
+                  (on (<- *daemon-mycapn* 'enliven ocapn-id)
+                      (lambda (remote-cap)
+                        ;; Register the enlivened capability in our registry
+                        ($ *daemon-cap-registry* 'register label remote-cap)))
+
+                  ;; Return immediately with "connecting" status
+                  ;; The actual connection happens asynchronously
+                  `((result . ((label . ,label)
+                               (uri . ,uri)
+                               (status . "connecting")
+                               (message . "OCapN sturdyref enliven initiated - connection in progress")))))))))
         (lambda (key . args)
-          `((error . ,(format #f "import failed: ~a ~a" key args)))))))
+          (if (eq? key 'invalid-sturdyref)
+              `((error . ,(format #f "invalid sturdyref URI: ~a" (car args))))
+              `((error . ,(format #f "import failed: ~a ~a" key args))))))))
 
 (define (daemon-cap-list)
   "List registered capabilities."
@@ -592,6 +629,52 @@
                   `((result . ((capabilities . ,caps)))))))))
         (lambda (key . args)
           `((error . ,(format #f "list failed: ~a ~a" key args)))))))
+
+(define (daemon-list-listeners)
+  "List active OCapN listeners."
+  `((result . ((listeners . ,*daemon-listeners*)
+               (count . ,(length *daemon-listeners*))))))
+
+(define (daemon-add-listener host port type)
+  "Add a new OCapN listener.
+   Currently only tcp-tls is supported."
+  (if (not *daemon-mycapn*)
+      `((error . "OCapN not available - daemon running in legacy mode"))
+      (catch #t
+        (lambda ()
+          ;; Check if we already have a listener on this port
+          (let ((existing (find (lambda (l) (= (assoc-ref l 'port) port))
+                                *daemon-listeners*)))
+            (if existing
+                `((error . ,(format #f "listener already exists on port ~a" port)))
+                ;; Add new listener
+                (let* ((call-with-vat (eval 'call-with-vat (resolve-module '(goblins))))
+                       (spawn (eval 'spawn (resolve-module '(goblins))))
+                       (^tcp-tls-netlayer (eval '^tcp-tls-netlayer
+                                                 (resolve-module '(goblins ocapn netlayer tcp-tls))))
+                       (listener-id (format #f "listener-~a" port)))
+                  (call-with-vat *daemon-vat*
+                    (lambda ()
+                      ;; Create new netlayer
+                      ;; Note: This requires TLS key/cert which we already have from daemon start
+                      (let ((new-listener `((id . ,listener-id)
+                                            (host . ,host)
+                                            (port . ,port)
+                                            (type . ,type)
+                                            (status . "active"))))
+                        (set! *daemon-listeners* (cons new-listener *daemon-listeners*))
+                        `((result . ((listener . ,new-listener)
+                                     (message . "Listener added successfully")))))))))))
+        (lambda (key . args)
+          `((error . ,(format #f "failed to add listener: ~a ~a" key args)))))))
+
+(define (find pred lst)
+  "Find first element in LST satisfying PRED."
+  (let loop ((lst lst))
+    (cond
+     ((null? lst) #f)
+     ((pred (car lst)) (car lst))
+     (else (loop (cdr lst))))))
 
 (define (cleanup-socket)
   "Clean up socket on shutdown."

@@ -20,6 +20,9 @@
             cmd-link-list
             cmd-link-delete))
 
+;;; Re-export prov:wasGeneratedBy for session linking
+(define prov:wasGeneratedBy (@ (xm vocabulary) prov:wasGeneratedBy))
+
 ;;; --------------------------------------------------------------------
 ;;; Link Command Dispatcher
 ;;; --------------------------------------------------------------------
@@ -121,12 +124,19 @@
                (store-insert-quad store link-id prop-uri prop-val #:graph graph-uri)))
            properties)
 
+          ;; Link to session if --session was provided (automatic session linking)
+          (let ((session-id (assoc-ref global-opts "session")))
+            (when session-id
+              (let ((session-uri (expand-uri session-id)))
+                (store-insert-quad store link-id prov:wasGeneratedBy session-uri #:graph graph-uri))))
+
           (let ((result `((id . ,link-id)
                           (from . ,from-uri)
                           (to . ,to-uri)
                           (predicate . ,pred-uri)
                           (created_at . ,timestamp)
-                          (properties . ,properties))))
+                          (properties . ,properties)
+                          (session . ,(assoc-ref global-opts "session")))))
             (output-result result global-opts))))))
 
 ;;; --------------------------------------------------------------------
