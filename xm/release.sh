@@ -53,13 +53,20 @@ fi
 
 git tag -a "$new_tag" -m "Release $new_tag"
 
-# Push to origin (Codeberg - triggers Woodpecker for Linux builds)
-echo "Pushing to origin..."
+# Get current branch
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+# Push branch and tag to origin (Codeberg - triggers Woodpecker for Linux builds)
+echo "Pushing $current_branch to origin..."
+git push origin "$current_branch"
+echo "Pushing tag to origin..."
 git push origin "$new_tag"
 
 # Push to GitHub mirror (triggers GitHub Actions for macOS builds)
 if git remote | grep -q '^github$'; then
-  echo "Pushing to github..."
+  echo "Pushing $current_branch to github..."
+  git push github "$current_branch"
+  echo "Pushing tag to github..."
   git push github "$new_tag"
 else
   echo "Note: 'github' remote not configured. macOS builds skipped."
