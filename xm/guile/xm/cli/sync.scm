@@ -240,7 +240,7 @@
                                       (format #t "  Direction: ~a\n" direction)
                                       (format #t "  Local triples: ~a\n" local-count)
                                       (format #t "  Status: ~a\n" (assoc-ref data 'status))))
-                                0))))))))))
+                                0))))))))))))
 
 ;;; --------------------------------------------------------------------
 ;;; Helper Functions
