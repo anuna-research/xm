@@ -61,7 +61,10 @@ jobs:
           path: xm/dist/xm-darwin-${{ matrix.arch }}.tar.gz
 
       - name: Install AWS CLI
-        run: brew install awscli
+        run: |
+          if ! command -v aws &> /dev/null; then
+            brew install awscli
+          fi
 
       - name: Upload to Cloudflare R2
         env:
