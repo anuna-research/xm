@@ -16,7 +16,7 @@ steps:
     directory: xm
     commands:
       # Install system dependencies
-      - apt-get update && apt-get install -y guile-3.0 guile-3.0-dev pkg-config curl build-essential
+      - apt-get update && apt-get install -y guile-3.0 guile-3.0-dev pkg-config curl build-essential libclang-dev
 
       # Install latest Rust (needed for oxigraph edition2024)
       - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
